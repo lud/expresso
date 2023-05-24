@@ -50,11 +50,24 @@ defmodule Expresso.Parser do
 
   def parse(input) do
     parser = expr()
+    buf = consume_whitespace(buffer(input, 0, 0))
 
-    case parser.(buffer(input, 0, 0)) do
-      {:ok, result, rest} -> {:ok, result, rest}
-      {:error, reason} when is_binary(reason) -> {:error, ParseError.exception(message: reason)}
-      {:error, reason} -> {:error, ParseError.exception(message: inspect(reason))}
+    case parser.(buf) do
+      {:ok, result, rest} ->
+        case empty_buffer?(consume_whitespace(rest)) do
+          true ->
+            {:ok, result}
+
+          false ->
+            {:error,
+             ParseError.exception(message: "buffer not empty: #{inspect(buffer(rest, :text))}")}
+        end
+
+      {:error, reason} when is_binary(reason) ->
+        {:error, ParseError.exception(message: reason)}
+
+      {:error, reason} ->
+        {:error, ParseError.exception(message: inspect(reason))}
     end
   end
 
@@ -68,10 +81,13 @@ defmodule Expresso.Parser do
   defp expr() do
     choice([
       method_call_chain(),
+      getprop_chain(),
       function_call(),
       float(),
-      data_path(),
-      integer()
+      # data_path(),
+      integer(),
+      identifier(),
+      quoted_string()
     ])
   end
 
@@ -85,24 +101,46 @@ defmodule Expresso.Parser do
         many1(method_call())
       ])
     )
-    |> map(fn [subject, method_calls] ->
-      Enum.reduce(method_calls, subject, fn {:method_call, nil, [fun, args]}, subject ->
-        {:fun_call, nil, [fun, [subject | args]]}
+    |> map(fn [subject, method_calls], buf ->
+      Enum.reduce(method_calls, subject, fn {:method_call, lc, [fun, args]}, subject ->
+        {:fun_call, lc, [fun, [subject | args]]}
+      end)
+    end)
+  end
+
+  defp getprop_chain do
+    exclusive(
+      :in_getprop_chain,
+      sequence([
+        sub_expr(),
+        many1(getprop())
+      ])
+    )
+    |> map(fn [subject, getters] ->
+      Enum.reduce(getters, subject, fn var, subject ->
+        {:getprop, nil, [subject, var]}
       end)
     end)
   end
 
   defp method_call do
-    exclusive(
-      :in_method_call,
-      sequence([
-        char(?:),
-        function_call()
-      ])
-      |> map(fn [_, {:fun_call, nil, [fun, args]}] ->
-        {:method_call, nil, [fun, args]}
-      end)
-    )
+    sequence([
+      token(char(?:)),
+      function_call()
+    ])
+    |> map(fn [_, {:fun_call, lc, [fun, args]}] ->
+      {:method_call, lc, [fun, args]}
+    end)
+  end
+
+  defp getprop do
+    sequence([
+      char(?.),
+      identifier()
+    ])
+    |> map(fn [_, var] ->
+      var
+    end)
   end
 
   defp exclusive(tag, parser) do
@@ -132,7 +170,7 @@ defmodule Expresso.Parser do
       arguments(),
       char(?))
     ])
-    |> map(fn [fun, _, args, _] -> {:fun_call, nil, [fun, args]} end)
+    |> map(fn [fun, _, args, _], buf -> {:fun_call, lc(buf), [fun, args]} end)
   end
 
   defp arguments do
@@ -160,8 +198,8 @@ defmodule Expresso.Parser do
       ])
       |> map(fn [_, chars, _] -> chars end)
     ])
-    |> map(fn chars ->
-      to_string(chars)
+    |> map(fn chars, buf ->
+      {:var, lc(buf), to_string(chars)}
     end)
   end
 
@@ -203,6 +241,7 @@ defmodule Expresso.Parser do
       ])
     ])
     |> map(fn chars -> chars |> :lists.flatten() |> :erlang.list_to_float() end)
+    |> wrap_literal()
   end
 
   defp integer do
@@ -211,10 +250,30 @@ defmodule Expresso.Parser do
       unsigned()
     ])
     |> map(fn chars -> chars |> :lists.flatten() |> :erlang.list_to_integer() end)
+    |> wrap_literal()
   end
 
   defp unsigned do
     many1(digit())
+  end
+
+  defp quoted_string do
+    sequence([
+      char(?"),
+      many0(
+        choice([
+          sequence([char(?\\), char(?")]) |> map(fn _ -> ?" end),
+          not_char(?")
+        ])
+      ),
+      char(?")
+    ])
+    |> map(fn [_, chars, _] -> to_string(chars) end)
+    |> wrap_literal()
+  end
+
+  defp wrap_literal(parser) do
+    map(parser, fn value, buf -> {:literal, lc(buf), value} end)
   end
 
   defp separated_list(element_parser, separator_parser) do
@@ -374,5 +433,12 @@ defmodule Expresso.Parser do
     defp indentation(_, add \\ 0)
     defp indentation(buffer(level: level), add), do: indentation(level, add)
     defp indentation(level, add), do: String.duplicate("  ", level + add)
+  end
+
+  defp consume_whitespace(buf) do
+    case take(buf) do
+      {char, buf} when char in [?\n, ?\t, ?\s, ?\r] -> consume_whitespace(buf)
+      _ -> buf
+    end
   end
 end

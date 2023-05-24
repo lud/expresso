@@ -1,5 +1,5 @@
 defmodule Expresso.EvalError do
-  defexception [:tag, :meta]
+  defexception [:tag, :meta, :line, :column, :source]
 
   @identifier_first_chars String.graphemes(
                             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
@@ -8,26 +8,72 @@ defmodule Expresso.EvalError do
                            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
                          )
 
-  def invalid_path(path, data) do
-    exception(:invalid_path, %{path: path, map?: is_map(data), data: data})
+  # -- Custom errors ----------------------------------------------------------
+
+  def key_error({:var, lc, key}, data) do
+    build(:key_error, lc, %{key: key, map?: is_map(data), data: data})
   end
 
-  def exception(tag, meta) do
-    exception(tag: tag, meta: meta)
+  def arg_error({:fun_call, lc, [fun, args]}, arg, arg_lc, arg_num, errmsg) do
+    build(:arg_error, arg_lc || lc, %{
+      fun: fun,
+      args: args,
+      arg: arg,
+      arg_num: arg_num,
+      errmsg: errmsg
+    })
+  end
+
+  # -- Generic error builder --------------------------------------------------
+
+  defp build(tag, lc, meta) when is_list(lc) do
+    line = Keyword.get(lc, :line)
+    column = Keyword.get(lc, :column)
+    exception(tag: tag, meta: meta, line: line, column: column)
+  end
+
+  defp build(tag, nil, meta) do
+    build(tag, [], meta)
+  end
+
+  # -- Generic Messages -------------------------------------------------------
+
+  def with_source(%{source: _} = e, code), do: %{e | source: code}
+
+  def message(%{source: code, line: line, column: column} = e)
+      when is_binary(code) and is_integer(line) and is_integer(column) do
+    :erlang.iolist_to_binary([
+      message(with_source(e, nil)),
+      format_source_loc(code, line, column)
+    ])
   end
 
   def message(%{tag: tag, meta: meta}), do: message(tag, meta)
 
-  defp message(:invalid_path, %{path: path, map?: map?, data: data}) do
-    sub = if(map?, do: "key not found", else: "data is not a map")
-    "could not retrieve path #{format_path(path)} from data: #{sub}"
+  # -- Specific messages ------------------------------------------------------
+
+  defp message(:key_error, %{key: key, map?: true}) do
+    "could not find key `#{format_key(key)}` from data"
   end
 
-  defp format_path(path) do
-    Enum.map_join(path, ".", &format_path_item/1)
+  defp message(:key_error, %{key: key, map?: false}) do
+    "cannot dereference key `#{format_key(key)}`, data is not an object"
   end
 
-  defp format_path_item(item) do
+  defp message(:arg_error, %{fun: fun, arg_num: arg_num, errmsg: errmsg}) do
+    "invalid #{nth(arg_num)} argument for function `#{fun}`, #{errmsg}"
+  end
+
+  def format_source_loc(code, line, column) do
+    lines = String.split(code, "\n")
+
+    case Enum.at(lines, line) do
+      nil -> ""
+      line -> ["\n\n", line, "\n", String.duplicate(" ", column), "^ error occured here\n"]
+    end
+  end
+
+  defp format_key(item) do
     [first | rest] = String.graphemes(item)
 
     if first in @identifier_first_chars and Enum.all?(rest, &(&1 in @identifier_last_chars)) do
@@ -36,4 +82,9 @@ defmodule Expresso.EvalError do
       "'" <> item <> "'"
     end
   end
+
+  defp nth(1), do: "1st"
+  defp nth(2), do: "2nd"
+  defp nth(3), do: "3rd"
+  defp nth(n), do: "#{n}th"
 end
