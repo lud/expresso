@@ -4,28 +4,32 @@ defmodule Expresso.Parser do
   @compile_env Mix.env()
   @dialyzer {:nowarn_function, debug: 1}
 
-  defmacro debug({:fn, _, [{:->, _, [[arg], body]} | []]}) do
+  defmacro debug(function) do
     if @compile_env == :prod do
       quote do
-        fn unquote(arg) -> unquote(body) end
+        unquote(function)
       end
     else
-      {fun, arity} = __CALLER__.function
+      {fun, _arity} = __CALLER__.function
 
       quote do
         fn the_input ->
-          the_input = bufdown(the_input, unquote(fun))
-          unquote(arg) = the_input
-          the_input |> IO.inspect(label: ~S/the_input/)
+          text = elem(the_input, 1)
+          fun = unquote(fun)
 
-          case unquote(body) do
+          IO.puts("#{indentation(the_input)}#{inspect(fun)} #{inspect(text)}")
+          the_input = bufdown(the_input, unquote(fun))
+          sub = unquote(function)
+          retval = sub.(the_input)
+
+          case retval do
             {:ok, retval, rest} ->
-              rest |> IO.inspect(label: ~S/rest/)
-              IO.puts("#{indentation(the_input)}#{debug_stack(rest)}")
-              IO.puts("#{indentation(rest)}#{inspect(retval)}")
-              {:ok, retval, bufup(rest)}
+              IO.puts("#{indentation(rest)}=> #{inspect(fun)} = #{inspect(retval)}")
+              rest = bufup(rest)
+              {:ok, retval, rest}
 
             {:error, reason} = err when is_binary(reason) ->
+              IO.puts("#{indentation(the_input, -1)}/#{unquote(fun)} FAIL")
               err
           end
         end
@@ -33,16 +37,12 @@ defmodule Expresso.Parser do
     end
   end
 
-  defmacro debug({:fn, _, [_, _ | []]}) do
+  defmacro {:fn, _, [_, _ | []]} do
     raise "debug macro not supported for multiple function clauses or multiple arguments"
   end
 
-  defmacro debug({:fn, _, other}) do
+  defmacro {:fn, _, other} do
     raise "debug macro bad call: #{inspect(other, pretty: true)}"
-  end
-
-  defp return(v, rest) do
-    {:ok, v, rest}
   end
 
   def parse(input) do
@@ -80,24 +80,16 @@ defmodule Expresso.Parser do
     choice([
       sequence([
         choice([ascii_letter(), char(?_)]),
-        many1(inline_key_char_num())
-      ])
-      |> map(fn x ->
-        x |> IO.inspect(label: ~S/x/)
-        x
-      end),
+        many0(inline_key_char_num())
+      ]),
       sequence([
         char(?'),
         many1(not_char(?')),
         char(?')
       ])
-      |> map(fn [_, chars, _] ->
-        chars |> IO.inspect(label: ~S/quoted identifier/)
-        chars
-      end)
+      |> map(fn [_, chars, _] -> chars end)
     ])
     |> map(fn chars ->
-      chars |> IO.inspect(label: ~S/identifier/)
       to_string(chars)
     end)
   end
@@ -168,7 +160,7 @@ defmodule Expresso.Parser do
   end
 
   defp sequence(parsers) do
-    debug(fn input ->
+    fn input ->
       case parsers do
         [] ->
           {:ok, [], input}
@@ -178,15 +170,15 @@ defmodule Expresso.Parser do
                {:ok, other_terms, rest} <- sequence(other_parsers).(rest),
                do: {:ok, [first_term | other_terms], rest}
       end
-    end)
+    end
   end
 
   defp map(parser, mapper) do
-    debug(fn
+    fn
       input ->
         with {:ok, term, rest} <- parser.(input),
-             do: return(mapper.(term), rest)
-    end)
+             do: {:ok, mapper.(term), rest}
+    end
   end
 
   defp many0(parser) do
@@ -219,7 +211,7 @@ defmodule Expresso.Parser do
   end
 
   defp choice(parsers) do
-    debug(fn input ->
+    fn input ->
       case parsers do
         [] ->
           {:error, "no parser suceeded"}
@@ -228,7 +220,7 @@ defmodule Expresso.Parser do
           with {:error, _reason} <- first_parser.(input),
                do: choice(other_parsers).(input)
       end
-    end)
+    end
   end
 
   defp digit(), do: satisfy(char(), fn char -> char in ?0..?9 end)
@@ -265,23 +257,29 @@ defmodule Expresso.Parser do
     buffer(text: text, line: line, column: column, level: 0, stack: [])
   end
 
-  defp take(buffer(text: text, line: line, column: column)) do
+  defp take(buffer(text: text, line: line, column: column, level: level, stack: stack)) do
     case text do
-      <<?\n, rest::binary>> -> {?\n, buffer(rest, line + 1, 0)}
-      <<char::utf8, rest::binary>> -> {char, buffer(rest, line, column + 1)}
-      "" -> :EOI
+      <<?\n, rest::binary>> ->
+        {?\n, buffer(text: rest, line: line + 1, column: 0, level: level, stack: stack)}
+
+      <<char::utf8, rest::binary>> ->
+        {char, buffer(text: rest, line: line, column: column + 1, level: level, stack: stack)}
+
+      "" ->
+        :EOI
     end
   end
 
   defp bufdown(buffer(level: level, stack: stack) = buf, fun),
     do: buffer(buf, level: level + 1, stack: [fun | stack])
 
-  defp bufup(buffer(level: level) = buf), do: buffer(buf, level: level - 1)
+  defp bufup(buffer(level: level) = buf) when level > 0, do: buffer(buf, level: level - 1)
 
-  defp indentation(buffer(level: level)) when level < 0,
-    do: "==" <> Integer.to_string(level) <> "=="
+  defp indentation(_, add \\ 0)
 
-  defp indentation(buffer(level: level)), do: String.duplicate("  ", level)
+  defp indentation(buffer(level: level), add), do: indentation(level, add)
+  defp indentation(level, add), do: String.duplicate("  ", level + add)
+
   def empty_buffer?(buffer(text: text)), do: text == ""
 
   defp debug_stack(buffer(stack: stack)),
