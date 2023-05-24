@@ -1,4 +1,5 @@
 defmodule Expresso.Parser do
+  alias Expresso.ParseError
   # Combinators adapted from https://gist.github.com/sasa1977/beaeb43d39b055ecb93b937123b633d5
 
   @compile_env Mix.env()
@@ -8,12 +9,19 @@ defmodule Expresso.Parser do
   Record.defrecord(:buffer, [:text, :line, :column, :level, :stack, :marks])
 
   defmacro debug(function) do
+    {fun, arity} = __CALLER__.function
+
     if @compile_env == :prod do
+      IO.warn(
+        "debug called for #{fun}/#{arity} in :prod compile environment",
+        __CALLER__
+      )
+
       quote do
         unquote(function)
       end
     else
-      {fun, _arity} = __CALLER__.function
+      Module.put_attribute(__CALLER__.module, :debugging, true)
 
       quote do
         fn the_input ->
@@ -40,17 +48,14 @@ defmodule Expresso.Parser do
     end
   end
 
-  defmacro {:fn, _, [_, _ | []]} do
-    raise "debug macro not supported for multiple function clauses or multiple arguments"
-  end
-
-  defmacro {:fn, _, other} do
-    raise "debug macro bad call: #{inspect(other, pretty: true)}"
-  end
-
   def parse(input) do
     parser = expr()
-    parser.(buffer(input, 0, 0))
+
+    case parser.(buffer(input, 0, 0)) do
+      {:ok, result, rest} -> {:ok, result, rest}
+      {:error, reason} when is_binary(reason) -> {:error, ParseError.exception(message: reason)}
+      {:error, reason} -> {:error, ParseError.exception(message: inspect(reason))}
+    end
   end
 
   defp lazy(combinator) do
@@ -61,36 +66,49 @@ defmodule Expresso.Parser do
   end
 
   defp expr() do
-    debug choice([
-            method_call(),
-            function_call(),
-            float(),
-            data_path(),
-            integer()
-          ])
+    choice([
+      method_call_chain(),
+      function_call(),
+      float(),
+      data_path(),
+      integer()
+    ])
   end
 
   defp sub_expr, do: lazy(fn -> expr() end)
 
+  defp method_call_chain do
+    exclusive(
+      :in_method_call_chain,
+      sequence([
+        sub_expr(),
+        many1(method_call())
+      ])
+    )
+    |> map(fn [subject, method_calls] ->
+      Enum.reduce(method_calls, subject, fn {:method_call, nil, [fun, args]}, subject ->
+        {:fun_call, nil, [fun, [subject | args]]}
+      end)
+    end)
+  end
+
   defp method_call do
-    debug exclusive(
-            :in_method_call,
-            sequence([
-              sub_expr(),
-              char(?:),
-              function_call()
-            ])
-            |> map(fn [receiver, _, {:fun_call, nil, [fun, args]}] ->
-              {:fun_call, nil, [fun, [receiver | args]]}
-            end)
-          )
+    exclusive(
+      :in_method_call,
+      sequence([
+        char(?:),
+        function_call()
+      ])
+      |> map(fn [_, {:fun_call, nil, [fun, args]}] ->
+        {:method_call, nil, [fun, args]}
+      end)
+    )
   end
 
   defp exclusive(tag, parser) do
     fn buf ->
       case forbidden?(buf, tag) do
         true ->
-          IO.puts("exclude '#{buffer(buf, :text)}' from #{inspect(tag)}")
           {:error, "exclusive mark"}
 
         _ ->
@@ -98,7 +116,7 @@ defmodule Expresso.Parser do
 
           case parser.(buf) do
             {:ok, result, rest} ->
-              {:ok, result, without_mark(rest, tag)}
+              {:ok, result, unforbid(rest, tag)}
 
             {:error, _} = err ->
               err
@@ -108,13 +126,13 @@ defmodule Expresso.Parser do
   end
 
   defp function_call do
-    debug sequence([
-            inline_indentifier(),
-            char(?(),
-            arguments(),
-            char(?))
-          ])
-          |> map(fn [fun, _, args, _] -> {:fun_call, nil, [fun, args]} end)
+    sequence([
+      inline_indentifier(),
+      char(?(),
+      arguments(),
+      char(?))
+    ])
+    |> map(fn [fun, _, args, _] -> {:fun_call, nil, [fun, args]} end)
   end
 
   defp arguments do
@@ -126,9 +144,9 @@ defmodule Expresso.Parser do
       identifier(),
       many0(sequence([char(?.), identifier()]))
     ])
-    |> map(fn [first, rest] ->
+    |> map(fn [first, rest], buf ->
       other_elements = Enum.map(rest, fn [_, element] -> element end)
-      {:dpath, nil, [first | other_elements]}
+      {:dpath, lc(buf), [first | other_elements]}
     end)
   end
 
@@ -148,16 +166,15 @@ defmodule Expresso.Parser do
   end
 
   defp inline_indentifier do
-    debug sequence([
-            choice([ascii_letter(), char(?_)]),
-            many0(inline_key_char_num())
-          ])
-          |> map(fn [first, rest] ->
-            to_string([first | rest])
-          end)
+    sequence([
+      choice([ascii_letter(), char(?_)]),
+      many0(inline_key_char_num())
+    ])
+    |> map(fn [first, rest] ->
+      to_string([first | rest])
+    end)
   end
 
-  defp inline_key_char(), do: choice([ascii_letter(), char(?_)])
   defp inline_key_char_num(), do: choice([ascii_letter(), char(?_), digit()])
 
   defp float do
@@ -238,9 +255,13 @@ defmodule Expresso.Parser do
 
   defp map(parser, mapper) do
     fn
-      input ->
+      input when is_function(mapper, 1) ->
         with {:ok, term, rest} <- parser.(input),
              do: {:ok, mapper.(term), rest}
+
+      input when is_function(mapper, 2) ->
+        with {:ok, term, rest} <- parser.(input),
+             do: {:ok, mapper.(term, input), rest}
     end
   end
 
@@ -329,24 +350,29 @@ defmodule Expresso.Parser do
     end
   end
 
-  defp bufdown(buffer(level: level, stack: stack) = buf, fun),
-    do: buffer(buf, level: level + 1, stack: [fun | stack])
+  defp lc(buffer(line: line, column: column)), do: [line: line, column: column]
 
-  defp bufup(buffer(level: level) = buf) when level > 0, do: buffer(buf, level: level - 1)
-  defp indentation(_, add \\ 0)
-  defp indentation(buffer(level: level), add), do: indentation(level, add)
-  defp indentation(level, add), do: String.duplicate("  ", level + add)
   def empty_buffer?(buffer(text: text)), do: text == ""
 
-  def forbid(buffer(marks: marks, line: l, column: c) = buf, k),
+  defp forbid(buffer(marks: marks, line: l, column: c) = buf, k),
     do: buffer(buf, marks: Map.put(marks, {k, l, c}, true))
 
-  def forbidden?(buffer(marks: marks, line: l, column: c) = buf, k),
+  defp unforbid(buffer(marks: marks, line: l, column: c) = buf, k),
+    do: buffer(buf, marks: Map.delete(marks, {k, l, c}))
+
+  defp forbidden?(buffer(marks: marks, line: l, column: c), k),
     do: Map.get(marks, {k, l, c}, false)
 
-  def without_mark(buffer(marks: marks) = buf, k),
-    do: buffer(buf, marks: Map.delete(marks, k))
+  if Module.get_attribute(__MODULE__, :debugging) do
+    # defp debug_stack(buffer(stack: stack)),
+    #   do: stack |> Enum.reverse() |> Enum.map_join("/", &to_string/1)
 
-  defp debug_stack(buffer(stack: stack)),
-    do: stack |> Enum.reverse() |> Enum.map_join("/", &to_string/1)
+    defp bufdown(buffer(level: level, stack: stack) = buf, fun),
+      do: buffer(buf, level: level + 1, stack: [fun | stack])
+
+    defp bufup(buffer(level: level) = buf) when level > 0, do: buffer(buf, level: level - 1)
+    defp indentation(_, add \\ 0)
+    defp indentation(buffer(level: level), add), do: indentation(level, add)
+    defp indentation(level, add), do: String.duplicate("  ", level + add)
+  end
 end
