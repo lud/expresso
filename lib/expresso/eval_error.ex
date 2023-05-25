@@ -28,8 +28,12 @@ defmodule Expresso.EvalError do
     build(:undefined_function_error, lc, %{fun: fun, args: args})
   end
 
-  def argument_count_error(arg, arg_num, lc) do
-    build(:argument_count_error, lc, %{arg: arg, arg_num: arg_num})
+  def function_argument_count_error(fun, arg_num, lc) do
+    build(:function_argument_count_error, lc, %{fun: fun, arg_num: arg_num})
+  end
+
+  def lambda_argument_count_error(arg, arg_num, lc) do
+    build(:lambda_argument_count_error, lc, %{arg: arg, arg_num: arg_num})
   end
 
   def empty_error(lc, message) do
@@ -80,7 +84,11 @@ defmodule Expresso.EvalError do
     "function `#{fun}` is not defined"
   end
 
-  defp message(:argument_count_error, %{arg: arg, arg_num: arg_num}) do
+  defp message(:function_argument_count_error, %{fun: fun, arg_num: arg_num}) do
+    "missing #{nth(arg_num)} argument for function `#{fun}`"
+  end
+
+  defp message(:lambda_argument_count_error, %{arg: arg, arg_num: arg_num}) do
     "missing #{nth(arg_num)} argument `#{arg}`"
   end
 

@@ -71,7 +71,7 @@ defmodule Expresso.VM.Library do
       end
 
       defp pull_arg([], state, _, arg_num) do
-        raise EvalError.argument_count_error("--arg--", arg_num, nil)
+        throw({:argument_count_error, arg_num})
       end
 
       # TODO optional arguments
@@ -120,12 +120,11 @@ defmodule Expresso.VM.Library do
     the_state = Macro.var(@call_state, mod)
     the_args = Macro.var(@call_args, mod)
 
-    pulling =
+    {unpack_vars, pack_types} =
       typed_args
       |> Enum.map(fn
         {:"::", _, [var, type]} ->
           caster = build_caster(type)
-
           {var, caster}
 
         other ->
@@ -134,16 +133,13 @@ defmodule Expresso.VM.Library do
                   ),
                   Macro.Env.stacktrace(env)
       end)
-      |> Enum.with_index(1)
-      |> Enum.map(fn {{var, caster_call}, index} ->
-        the_var = var
+      |> Enum.unzip()
 
-        quote do
-          {unquote(the_var), unquote(the_args), unquote(the_state)} =
-            pull_arg(unquote(the_args), unquote(the_state), unquote(caster_call), unquote(index))
-        end
-      end)
-      |> then(&{:__block__, [], &1})
+    pulling =
+      quote do
+        {unquote(unpack_vars), _, unquote(the_state)} =
+          pull_args(unquote(the_args), unquote(the_state), unquote(pack_types))
+      end
 
     quote do
       defp __vm_function__(unquote(name), unquote(the_args), unquote(the_state)) do
@@ -152,7 +148,8 @@ defmodule Expresso.VM.Library do
         {return, unquote(the_state)}
       end
     end
-    |> tap(&IO.puts(Macro.to_string(&1)))
+
+    # |> tap(&IO.puts(Macro.to_string(&1)))
   end
 
   defp build_caster({:|, _, types}) do

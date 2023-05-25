@@ -1,3 +1,4 @@
+# credo:disable-for-this-file Credo.Check.Refactor.Nesting
 defmodule Expresso.Parser do
   alias Expresso.ParseError
   # Combinators adapted from https://gist.github.com/sasa1977/beaeb43d39b055ecb93b937123b633d5
@@ -104,7 +105,7 @@ defmodule Expresso.Parser do
         many1(method_call())
       ])
     )
-    |> map(fn [subject, method_calls], buf ->
+    |> map(fn [subject, method_calls] ->
       Enum.reduce(method_calls, subject, fn {:method_call, lc, [fun, args]}, subject ->
         {:fun_call, lc, [fun, [subject | args]]}
       end)
@@ -183,7 +184,7 @@ defmodule Expresso.Parser do
 
   defp lambda_args do
     separated_list(
-      token(inline_identifier()) |> map(fn key, buf -> {:var, lc(buf), key} end),
+      token(inline_identifier() |> map(fn key, buf -> {:var, lc(buf), key} end)),
       char(?,)
     )
   end

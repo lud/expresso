@@ -38,7 +38,7 @@ defmodule Expresso.VM do
     {deref(subject, var), state}
   end
 
-  defp eval({:fun_call, _meta, [fun, args]} = fun_call, state) do
+  defp eval({:fun_call, lc, [fun, args]} = fun_call, state) do
     __vm_function__(fun, args, state)
   catch
     {:arg_type_error, arg, arg_lc, arg_num, errmsg} ->
@@ -46,6 +46,9 @@ defmodule Expresso.VM do
 
     :undefined_function_error ->
       raise EvalError.undefined_function_error(fun_call)
+
+    {:argument_count_error, arg_num} ->
+      raise EvalError.function_argument_count_error(fun, arg_num, lc)
   end
 
   defp eval({:lambda, _meta, [_, _]} = lambda, state) do
@@ -59,7 +62,6 @@ defmodule Expresso.VM do
   defp build_lambda({:lambda, _meta, [_, body]} = lambda, state) do
     fun = fn args, state_in ->
       scope = Map.new(zip_args(lambda, args, 1))
-      scope |> IO.inspect(label: ~S/scope/)
       state_in = put_scope(state_in, scope)
       {return, state_out} = eval(body, state_in)
       {return, drop_scope(state_out)}
@@ -72,7 +74,7 @@ defmodule Expresso.VM do
     do_zip_args(arg_vars, args, n)
   catch
     :throw, {:missing_lambda_arg, k, n, arg_lc} ->
-      raise EvalError.argument_count_error(k, n, arg_lc || lc)
+      raise EvalError.lambda_argument_count_error(k, n, arg_lc || lc)
   end
 
   defp do_zip_args([{:var, _, k} | ks], [v | vs], n), do: [{k, v} | do_zip_args(ks, vs, n + 1)]
@@ -82,8 +84,6 @@ defmodule Expresso.VM do
   # -- Reading values from scopes ---------------------------------------------
 
   defp lookup_var(%{vars: vars, scope: scopes} = state, var) do
-    vars |> IO.inspect(label: ~S/vars/)
-    scopes |> IO.inspect(label: ~S/scopes/)
     value = deref_scope(scopes, vars, var)
     {value, state}
   end
@@ -153,17 +153,15 @@ defmodule Expresso.VM do
     |> then(fn {values, state} -> {:lists.reverse(values), state} end)
   end
 
-  defp __vm_function__("reduce", raw_args = args, state) do
-    {[list, init, fun], args, state} =
-      case args do
+  defp __vm_function__("reduce", raw_args, state) do
+    {[list, init, fun], _args, state} =
+      case raw_args do
         [_, _, _ | _] ->
-          pull_args(args, state, [&__vm_type__list/1, &__vm_type__any/1, &__vm_type__lambda/1])
+          pull_args(raw_args, state, [&__vm_type__list/1, &__vm_type__any/1, &__vm_type__lambda/1])
 
         _ ->
           {[list, fun], args, state} =
-            pull_args(args, state, [&__vm_type__list/1, &__vm_type__lambda/1])
-
-          list |> IO.inspect(label: ~S/list/)
+            pull_args(raw_args, state, [&__vm_type__list/1, &__vm_type__lambda/1])
 
           case list do
             [first | rest] ->

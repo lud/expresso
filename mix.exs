@@ -19,7 +19,10 @@ defmodule Expresso.MixProject do
   end
 
   defp deps do
-    []
+    [
+      # Dev
+      {:credo, "~> 1.7", only: [:dev], runtime: false}
+    ]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

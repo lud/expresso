@@ -4,7 +4,7 @@ defmodule Expresso do
   alias Expresso.Parser
   alias Expresso.VM
 
-  def parse(code, opts \\ []) do
+  def parse(code, _opts \\ []) do
     Parser.parse(code)
   end
 
@@ -16,11 +16,19 @@ defmodule Expresso do
   end
 
   def eval_string(code, opts \\ []) do
-    with {:ok, ast} <- parse(code, opts) do
-      VM.run(ast, opts)
-    else
-      {:error, %EvalError{} = e} -> {:error, EvalError.with_source(e, code)}
-      {:error, reason} -> {:error, reason}
+    case parse(code, opts) do
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, ast} ->
+        case eval_ast(ast, opts) do
+          {:ok, value, state} -> {:ok, value, state}
+          {:error, %EvalError{} = e} -> {:error, EvalError.with_source(e, code)}
+        end
     end
+  end
+
+  def eval_ast(ast, opts \\ []) do
+    VM.run(ast, opts)
   end
 end
