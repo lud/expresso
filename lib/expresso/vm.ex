@@ -37,8 +37,8 @@ defmodule Expresso.VM do
     {deref(subject, var), state}
   end
 
-  defp eval({:fun_call, meta, [fun, args]} = fun_call, state) do
-    fun_impl(fun, args, state)
+  defp eval({:fun_call, _meta, [fun, args]} = fun_call, state) do
+    __fun_impl__(fun, args, state)
   catch
     {:arg_error, arg, arg_lc, arg_num, errmsg} ->
       raise EvalError.arg_error(fun_call, arg, arg_lc, arg_num, errmsg)
@@ -65,38 +65,16 @@ defmodule Expresso.VM do
 
   # -- Standard Library functions ---------------------------------------------
 
-  defp fun_impl("replace", args, state) do
-    {subject, args, state} = pull_arg(args, state, &loose_string/1, 1)
-    {search, args, state} = pull_arg(args, state, &loose_string/1, 2)
-    {replacement, _args, state} = pull_arg(args, state, &loose_string/1, 3)
-    {String.replace(subject, search, replacement), state}
+  use Expresso.VM.Library
+
+  # defp fun_impl("replace", args, state) do
+  #   {subject, args, state} = pull_arg(args, state, &loose_string/1, 1)
+  #   {search, args, state} = pull_arg(args, state, &loose_string/1, 2)
+  #   {replacement, _args, state} = pull_arg(args, state, &loose_string/1, 3)
+  #   {String.replace(subject, search, replacement), state}
+  # end
+
+  function replace(subject :: loose_string, search :: loose_string, replacement :: loose_string) do
+    String.replace(subject, search, replacement)
   end
-
-  defp pull_arg([arg | args], state, caster, arg_num) do
-    {arg_val, state} = eval(arg, state)
-
-    case caster.(arg_val) do
-      {:ok, value} ->
-        {value, args, state}
-
-      {:error, errmsg} ->
-        lc = fetch_lc(arg)
-
-        throw({:arg_error, arg, lc, arg_num, errmsg})
-    end
-  end
-
-  defp loose_string(arg) when is_binary(arg), do: {:ok, arg}
-  defp loose_string(arg) when is_integer(arg), do: {:ok, Integer.to_string(arg)}
-  defp loose_string(arg) when is_float(arg), do: {:ok, Float.to_string(arg)}
-  defp loose_string(arg), do: {:error, "cannot use #{typeof(arg)} as a string"}
-
-  defp typeof(list) when is_list(list), do: "array"
-  defp typeof(map) when is_map(map), do: "object"
-  defp typeof(binary) when is_binary(binary), do: "binary"
-  defp typeof(integer) when is_integer(integer), do: "integer"
-  defp typeof(float) when is_float(float), do: "float"
-
-  defp fetch_lc({_, lc, _}), do: lc
-  defp fetch_lc(_), do: nil
 end
