@@ -141,4 +141,12 @@ defmodule Expresso.ParserTest do
       """)
     )
   end
+
+  test "can parse a lambda expression" do
+    assert {:fun_call, [line: 0, column: 10],
+            ["map", [{:var, [line: 0, column: 0], "some_list"}, lambda]]} =
+             get_tokens("some_list:map(fn(x) => x end)")
+
+    assert {:lambda, _, [[{:var, [line: 0, column: 17], "x"}], {:var, _, "x"}]} = lambda
+  end
 end

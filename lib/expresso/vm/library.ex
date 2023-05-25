@@ -1,14 +1,16 @@
 defmodule Expresso.VM.Library do
+  alias Expresso.EvalError
   @arg_types ~w(
     string
     loose_string
     object
     list
     number
+    lambda
   )a
 
   defmacro __using__(_) do
-    quote do
+    quote location: :keep do
       import unquote(__MODULE__)
       @before_compile unquote(__MODULE__)
       # Injecting all functions types to speed up things
@@ -28,6 +30,12 @@ defmodule Expresso.VM.Library do
 
       defp __vm_type__number(arg) when is_integer(arg) when is_float(arg), do: {:ok, arg}
       defp __vm_type__number(arg), do: {:error, "not a number"}
+
+      defp __vm_type__lambda({:lambda, f}) when is_function(f, 2), do: {:ok, f}
+      defp __vm_type__lambda(_), do: {:error, "not a function"}
+
+      defp __vm_type__any({:lambda, f}) when is_function(f, 2), do: {:ok, f}
+      defp __vm_type__any(arg), do: {:ok, arg}
 
       defp __vm_union_type__(arg, casters), do: __vm_union_type__(arg, casters, [])
 
@@ -58,8 +66,25 @@ defmodule Expresso.VM.Library do
           {:error, errmsg} ->
             lc = fetch_lc(arg)
 
-            throw({:arg_error, arg, lc, arg_num, errmsg})
+            throw({:arg_type_error, arg, lc, arg_num, errmsg})
         end
+      end
+
+      defp pull_arg([], state, _, arg_num) do
+        raise EvalError.argument_count_error("--arg--", arg_num, nil)
+      end
+
+      # TODO optional arguments
+
+      defp pull_args(args, state, types) do
+        types
+        |> Enum.with_index(1)
+        |> Enum.reduce({[], args, state}, fn {t, index}, {values, args, state} ->
+          {value, args, state} = pull_arg(args, state, t, index)
+
+          {[value | values], args, state}
+        end)
+        |> then(fn {values, args, state} -> {:lists.reverse(values), args, state} end)
       end
 
       defp fetch_lc({_, lc, _}), do: lc
@@ -74,19 +99,21 @@ defmodule Expresso.VM.Library do
         _ -> {signature, []}
       end
 
-    build_function(__CALLER__.module, call, guards, body)
+    build_function(__CALLER__, call, guards, body)
   end
 
   @call_state :function_call_state
   @call_args :arguments
 
-  defp build_function(_mod, _call, [_ | _] = guards, _body) do
-    raise "VM functions do not support guards, got: when #{Macro.to_string(quote do
-            (unquote_splicing(guards))
-          end)}"
+  defp build_function(env, _call, [_ | _] = guards, _body) do
+    reraise "VM functions do not support guards, got: when #{Macro.to_string(quote do
+              (unquote_splicing(guards))
+            end)}",
+            Macro.Env.stacktrace(env)
   end
 
-  defp build_function(mod, call, [], body) do
+  defp build_function(env, call, [], body) do
+    mod = env.module
     {name, _, typed_args} = call
     name = Atom.to_string(name)
     # mod = env.module
@@ -95,10 +122,17 @@ defmodule Expresso.VM.Library do
 
     pulling =
       typed_args
-      |> Enum.map(fn {:"::", _, [var, type]} ->
-        caster = build_caster(type)
+      |> Enum.map(fn
+        {:"::", _, [var, type]} ->
+          caster = build_caster(type)
 
-        {var, caster}
+          {var, caster}
+
+        other ->
+          reraise ArgumentError.exception(
+                    "Invalid argument declaration: #{Macro.to_string(other)}"
+                  ),
+                  Macro.Env.stacktrace(env)
       end)
       |> Enum.with_index(1)
       |> Enum.map(fn {{var, caster_call}, index} ->
@@ -112,7 +146,7 @@ defmodule Expresso.VM.Library do
       |> then(&{:__block__, [], &1})
 
     quote do
-      def __vm_function__(unquote(name), unquote(the_args), unquote(the_state)) do
+      defp __vm_function__(unquote(name), unquote(the_args), unquote(the_state)) do
         unquote(pulling)
         return = unquote(body)
         {return, unquote(the_state)}
@@ -143,8 +177,8 @@ defmodule Expresso.VM.Library do
 
   defmacro __before_compile__(_) do
     quote do
-      def __vm_function__(name, _, state) do
-        throw(:undefined_function)
+      defp __vm_function__(name, _, state) do
+        throw(:undefined_function_error)
       end
     end
   end

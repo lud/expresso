@@ -57,7 +57,13 @@ defmodule Expresso.Parser do
 
           false ->
             {:error,
-             ParseError.exception(message: "buffer not empty: #{inspect(buffer(rest, :text))}")}
+             ParseError.exception(
+               message: """
+               buffer not empty: #{inspect(buffer(rest, :text))}
+
+               tokens: #{inspect(result)}
+               """
+             )}
         end
 
       {:error, reason} when is_binary(reason) ->
@@ -77,11 +83,11 @@ defmodule Expresso.Parser do
 
   defp expr() do
     choice([
+      lambda_expr(),
       method_call_chain(),
       getprop_chain(),
       function_call(),
       float(),
-      # data_path(),
       integer(),
       identifier(),
       quoted_string()
@@ -160,23 +166,44 @@ defmodule Expresso.Parser do
     end
   end
 
+  defp lambda_expr do
+    sequence([
+      keyword(:fn),
+      char(?(),
+      lambda_args(),
+      char(?)),
+      symbol('=>'),
+      sub_expr(),
+      keyword(:end)
+    ])
+    |> map(fn [:fn, _, arg_names, _, _, expression, :end], buf ->
+      {:lambda, lc(buf), [arg_names, expression]}
+    end)
+  end
+
+  defp lambda_args do
+    separated_list(
+      token(inline_identifier()) |> map(fn key, buf -> {:var, lc(buf), key} end),
+      char(?,)
+    )
+  end
+
   defp function_call do
     sequence([
-      inline_indentifier(),
+      inline_identifier(),
       char(?(),
-      choice([arguments(), many0(whitespace())]),
+      choice([
+        separated_list(token(sub_expr()), char(?,)),
+        many0(whitespace())
+      ]),
       char(?))
     ])
     |> map(fn [fun, _, args, _], buf -> {:fun_call, lc(buf), [fun, args]} end)
   end
 
-  defp arguments do
-    separated_list(token(sub_expr()), char(?,))
-  end
-
   defp identifier() do
     choice([
-      inline_indentifier(),
+      inline_identifier(),
       sequence([
         char(?'),
         many1(not_char(?')),
@@ -184,12 +211,10 @@ defmodule Expresso.Parser do
       ])
       |> map(fn [_, chars, _] -> chars end)
     ])
-    |> map(fn chars, buf ->
-      {:var, lc(buf), to_string(chars)}
-    end)
+    |> map(fn chars, buf -> {:var, lc(buf), to_string(chars)} end)
   end
 
-  defp inline_indentifier do
+  defp inline_identifier do
     sequence([
       choice([ascii_letter(), char(?_)]),
       many0(inline_key_char_num())
@@ -200,6 +225,19 @@ defmodule Expresso.Parser do
   end
 
   defp inline_key_char_num(), do: choice([ascii_letter(), char(?_), digit()])
+
+  defp keyword(expected) when is_atom(expected) do
+    str = to_string(expected)
+
+    inline_identifier()
+    |> token()
+    |> satisfy(fn identifier -> identifier == str end)
+    |> map(fn _ -> expected end)
+  end
+
+  defp symbol(chars) when is_list(chars) do
+    token(sequence(Enum.map(chars, &char(&1))))
+  end
 
   defp float do
     choice([

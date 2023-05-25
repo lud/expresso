@@ -13,7 +13,7 @@ defmodule Expresso.VMTest do
     end
   end
 
-  defp get_error(code, input) do
+  defp get_error(code, input \\ %{}) do
     tokens = get_tokens(code)
     assert {:error, reason} = VM.run(tokens, input)
     assert is_struct(reason, EvalError)
@@ -136,5 +136,64 @@ defmodule Expresso.VMTest do
     assert 3 = run("add(1, 2)")
     assert 3 = run("1:add(2)")
     assert 3.14 = run("3:add(0.14)")
+  end
+
+  test "missing arg error" do
+    err = get_error("add(1)", %{})
+  end
+
+  test "lambdas" do
+    assert [2, 3, 4] =
+             run("some_list:for_each(fn(x) => x:add(1) end)", %{"some_list" => [1, 2, 3]})
+
+    assert [11, 12, 13] =
+             run("some_list:for_each(fn(x) => x:add(amount) end)", %{
+               "some_list" => [1, 2, 3],
+               "amount" => 10
+             })
+
+    # var shadowing
+    assert [[11], [12, 15], [13]] =
+             run("some_list:for_each(fn(x) => x:for_each(fn(x) => x:add(amount) end) end)", %{
+               "some_list" => [[1], [2, 5], [3]],
+               "amount" => 10
+             })
+
+    # missing arguments
+    err =
+      get_error("some_list:for_each(fn(x, some_required_arg) => x:add(amount) end)", %{
+        "some_list" => [1, 2, 3],
+        "amount" => 10
+      })
+
+    assert Exception.message(err) =~ "missing 2nd argument `some_required_arg`"
+
+    # extra arguments are OK
+  end
+
+  test "reduce lambda" do
+    # with initializer
+    assert 110 =
+             run("some_list:reduce(100, fn(x, acc) => acc:add(x) end)", %{
+               "some_list" => [1, 2, 3, 4]
+             })
+
+    # empty list with initializer
+    assert 100 =
+             run("some_list:reduce(100, fn(x, acc) => acc:add(x) end)", %{
+               "some_list" => []
+             })
+
+    # without initializer
+    assert 10 =
+             run("some_list:reduce(fn(x, acc) => acc:add(x) end)", %{
+               "some_list" => [1, 2, 3, 4]
+             })
+
+    # empty list without initializer
+    err =
+      get_error("reduce(some_list, fn(x, acc) => acc:add(x) end)", %{
+        "some_list" => []
+      })
   end
 end

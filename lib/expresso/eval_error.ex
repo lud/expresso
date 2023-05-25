@@ -14,8 +14,8 @@ defmodule Expresso.EvalError do
     build(:key_error, lc, %{key: key, map?: is_map(data), data: data})
   end
 
-  def arg_error({:fun_call, lc, [fun, args]}, arg, arg_lc, arg_num, errmsg) do
-    build(:arg_error, arg_lc || lc, %{
+  def arg_type_error({:fun_call, lc, [fun, args]}, arg, arg_lc, arg_num, errmsg) do
+    build(:arg_type_error, arg_lc || lc, %{
       fun: fun,
       args: args,
       arg: arg,
@@ -24,8 +24,16 @@ defmodule Expresso.EvalError do
     })
   end
 
-  def undefined_function({:fun_call, lc, [fun, args]}) do
-    build(:undefined_function, lc, %{fun: fun, args: args})
+  def undefined_function_error({:fun_call, lc, [fun, args]}) do
+    build(:undefined_function_error, lc, %{fun: fun, args: args})
+  end
+
+  def argument_count_error(arg, arg_num, lc) do
+    build(:argument_count_error, lc, %{arg: arg, arg_num: arg_num})
+  end
+
+  def empty_error(lc, message) do
+    build(:empty_error, lc, %{message: message})
   end
 
   # -- Generic error builder --------------------------------------------------
@@ -64,12 +72,20 @@ defmodule Expresso.EvalError do
     "cannot dereference key `#{format_key(key)}`, data is not an object"
   end
 
-  defp message(:arg_error, %{fun: fun, arg_num: arg_num, errmsg: errmsg}) do
+  defp message(:arg_type_error, %{fun: fun, arg_num: arg_num, errmsg: errmsg}) do
     "invalid #{nth(arg_num)} argument for function `#{fun}`, #{errmsg}"
   end
 
-  defp message(:undefined_function, %{fun: fun}) do
+  defp message(:undefined_function_error, %{fun: fun}) do
     "function `#{fun}` is not defined"
+  end
+
+  defp message(:argument_count_error, %{arg: arg, arg_num: arg_num}) do
+    "missing #{nth(arg_num)} argument `#{arg}`"
+  end
+
+  defp message(:empty_error, %{message: message}) do
+    message
   end
 
   def format_source_loc(code, line, column) do
@@ -77,7 +93,7 @@ defmodule Expresso.EvalError do
 
     case Enum.at(lines, line) do
       nil -> ""
-      line -> ["\n\n", line, "\n", String.duplicate(" ", column), "^ error occured here\n"]
+      line -> ["\n\n", line, "\n", String.duplicate(" ", column), "| error occured here\n"]
     end
   end
 
