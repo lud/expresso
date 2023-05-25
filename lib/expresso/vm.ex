@@ -12,7 +12,7 @@ defmodule Expresso.VM do
       end
 
     {value, state} = eval(ast, %__MODULE__{vars: vars, scope: []})
-    {:ok, value, state}
+
     {:ok, value, state}
   rescue
     e in EvalError -> {:error, e}
@@ -23,10 +23,6 @@ defmodule Expresso.VM do
   defp eval({:literal, _, value}, state) do
     literal(value, state)
   end
-
-  # defp eval({:dpath, _, path}, state) do
-  #   {_value, _state} = fetch_value(state, path, path)
-  # end
 
   defp eval({:var, _, _} = var, state) do
     {value, state} = lookup_var(state, var)
@@ -108,12 +104,12 @@ defmodule Expresso.VM do
     raise EvalError.key_error(var, data)
   end
 
-  defp put_scope(%__MODULE__{scope: scopes} = state, scope) do
-    %__MODULE__{state | scope: [scope | scopes]}
+  defp put_scope(%{scope: scopes} = state, scope) do
+    %{state | scope: [scope | scopes]}
   end
 
-  defp drop_scope(%__MODULE__{scope: [_ | scope]} = state) do
-    %__MODULE__{state | scope: scope}
+  defp drop_scope(%{scope: [_ | scope]} = state) do
+    %{state | scope: scope}
   end
 
   # -- Standard Library functions ---------------------------------------------

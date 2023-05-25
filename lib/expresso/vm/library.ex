@@ -1,5 +1,4 @@
 defmodule Expresso.VM.Library do
-  alias Expresso.EvalError
   @arg_types ~w(
     string
     loose_string
@@ -17,7 +16,9 @@ defmodule Expresso.VM.Library do
       defp __vm_type__loose_string(arg) when is_binary(arg), do: {:ok, arg}
       defp __vm_type__loose_string(arg) when is_integer(arg), do: {:ok, Integer.to_string(arg)}
       defp __vm_type__loose_string(arg) when is_float(arg), do: {:ok, Float.to_string(arg)}
-      defp __vm_type__loose_string(arg), do: {:error, "cannot use #{typeof(arg)} as a string"}
+
+      defp __vm_type__loose_string(arg),
+        do: {:error, "cannot use " <> typeof(arg) <> " as a string"}
 
       defp __vm_type__object(arg) when is_map(arg), do: {:ok, arg}
       defp __vm_type__object(arg), do: {:error, "not an object"}
@@ -64,7 +65,7 @@ defmodule Expresso.VM.Library do
             {value, args, state}
 
           {:error, errmsg} ->
-            lc = fetch_lc(arg)
+            {_, lc, _} = arg
 
             throw({:arg_type_error, arg, lc, arg_num, errmsg})
         end
@@ -86,9 +87,6 @@ defmodule Expresso.VM.Library do
         end)
         |> then(fn {values, args, state} -> {:lists.reverse(values), args, state} end)
       end
-
-      defp fetch_lc({_, lc, _}), do: lc
-      defp fetch_lc(_), do: nil
     end
   end
 

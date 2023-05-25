@@ -139,7 +139,8 @@ defmodule Expresso.VMTest do
   end
 
   test "missing arg error" do
-    err = get_error("add(1)", %{})
+    err = get_error("add(1)")
+    assert Exception.message(err) =~ "missing 2nd argument for function `add`"
   end
 
   test "lambdas" do
@@ -195,5 +196,7 @@ defmodule Expresso.VMTest do
       get_error("reduce(some_list, fn(x, acc) => acc:add(x) end)", %{
         "some_list" => []
       })
+
+    assert Exception.message(err) =~ "empty list given to `reduce` without initial value"
   end
 end
