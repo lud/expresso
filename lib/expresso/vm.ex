@@ -38,10 +38,13 @@ defmodule Expresso.VM do
   end
 
   defp eval({:fun_call, _meta, [fun, args]} = fun_call, state) do
-    __fun_impl__(fun, args, state)
+    __vm_function__(fun, args, state)
   catch
     {:arg_error, arg, arg_lc, arg_num, errmsg} ->
       raise EvalError.arg_error(fun_call, arg, arg_lc, arg_num, errmsg)
+
+    :undefined_function ->
+      raise EvalError.undefined_function(fun_call)
   end
 
   defp literal(int, state) when is_integer(int), do: {int, state}
@@ -77,4 +80,15 @@ defmodule Expresso.VM do
   function replace(subject :: loose_string, search :: loose_string, replacement :: loose_string) do
     String.replace(subject, search, replacement)
   end
+
+  function size(elem :: object), do: map_size(elem)
+
+  function len(elem :: string | list) do
+    case elem do
+      str when is_binary(str) -> String.length(str)
+      list when is_list(list) -> length(list)
+    end
+  end
+
+  function add(a :: number, b :: number), do: a + b
 end

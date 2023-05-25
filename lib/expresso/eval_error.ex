@@ -24,6 +24,10 @@ defmodule Expresso.EvalError do
     })
   end
 
+  def undefined_function({:fun_call, lc, [fun, args]}) do
+    build(:undefined_function, lc, %{fun: fun, args: args})
+  end
+
   # -- Generic error builder --------------------------------------------------
 
   defp build(tag, lc, meta) when is_list(lc) do
@@ -62,6 +66,10 @@ defmodule Expresso.EvalError do
 
   defp message(:arg_error, %{fun: fun, arg_num: arg_num, errmsg: errmsg}) do
     "invalid #{nth(arg_num)} argument for function `#{fun}`, #{errmsg}"
+  end
+
+  defp message(:undefined_function, %{fun: fun}) do
+    "function `#{fun}` is not defined"
   end
 
   def format_source_loc(code, line, column) do

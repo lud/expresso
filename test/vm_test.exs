@@ -6,8 +6,11 @@ defmodule Expresso.VMTest do
 
   defp run(code, input \\ %{}) do
     tokens = get_tokens(code, print: true)
-    assert {:ok, value, _state} = VM.run(tokens, input)
-    value
+
+    case VM.run(tokens, input) do
+      {:ok, value, _state} -> value
+      {:error, e} -> raise EvalError.with_source(e, code)
+    end
   end
 
   defp get_error(code, input) do
@@ -108,5 +111,30 @@ defmodule Expresso.VMTest do
                """,
                %{"chars" => %{"slash" => "/", "bar" => "|"}}
              )
+
+    # chaining error position
+    get_error(~S/a_map:replace("l", "x")/, %{"a_map" => %{}})
+    get_error(~S/"hello":replace("o", ""):size()/, %{"a_map" => %{}})
+    get_error(~S/"hello":replace("l", a_map)/, %{"a_map" => %{}})
+  end
+
+  test "lengths and sizes" do
+    values = %{
+      "some_string" => "abc",
+      "some_list" => 'abc',
+      "some_map" => %{a: 1, b: 2, c: 3}
+    }
+
+    assert 3 = run(~s[some_string:len()], values)
+    assert 3 = run(~s[some_list:len()], values)
+    assert 3 = run(~s[some_map:size()], values)
+
+    get_error(~s[some_map:len()], values)
+  end
+
+  test "math functions" do
+    assert 3 = run("add(1, 2)")
+    assert 3 = run("1:add(2)")
+    assert 3.14 = run("3:add(0.14)")
   end
 end

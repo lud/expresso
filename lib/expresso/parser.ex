@@ -2,16 +2,13 @@ defmodule Expresso.Parser do
   alias Expresso.ParseError
   # Combinators adapted from https://gist.github.com/sasa1977/beaeb43d39b055ecb93b937123b633d5
 
-  @compile_env Mix.env()
-  @dialyzer {:nowarn_function, debug: 1}
-
   require Record
   Record.defrecord(:buffer, [:text, :line, :column, :level, :stack, :marks])
 
   defmacro debug(function) do
     {fun, arity} = __CALLER__.function
 
-    if @compile_env == :prod do
+    if Mix.env() == :prod do
       IO.warn(
         "debug called for #{fun}/#{arity} in :prod compile environment",
         __CALLER__
@@ -167,7 +164,7 @@ defmodule Expresso.Parser do
     sequence([
       inline_indentifier(),
       char(?(),
-      arguments(),
+      choice([arguments(), many0(whitespace())]),
       char(?))
     ])
     |> map(fn [fun, _, args, _], buf -> {:fun_call, lc(buf), [fun, args]} end)
@@ -175,17 +172,6 @@ defmodule Expresso.Parser do
 
   defp arguments do
     separated_list(token(sub_expr()), char(?,))
-  end
-
-  defp data_path do
-    sequence([
-      identifier(),
-      many0(sequence([char(?.), identifier()]))
-    ])
-    |> map(fn [first, rest], buf ->
-      other_elements = Enum.map(rest, fn [_, element] -> element end)
-      {:dpath, lc(buf), [first | other_elements]}
-    end)
   end
 
   defp identifier() do
@@ -368,6 +354,7 @@ defmodule Expresso.Parser do
 
   defp digit(), do: satisfy(char(), fn char -> char in ?0..?9 end)
   defp ascii_letter(), do: satisfy(char(), fn char -> char in ?A..?Z or char in ?a..?z end)
+  defp whitespace(), do: satisfy(char(), fn char -> char in [?\s, ?\n, ?\t, ?\r] end)
 
   defp char(expected), do: satisfy(char(), fn char -> char == expected end)
   defp not_char(rejected), do: satisfy(char(), fn char -> char != rejected end)
@@ -384,8 +371,6 @@ defmodule Expresso.Parser do
 
   defp char() do
     fn input ->
-      # input |> IO.inspect(label: ~S/char/)
-
       case take(input) do
         :EOI -> {:error, "unexpected end of input"}
         {char, buf} -> {:ok, char, buf}

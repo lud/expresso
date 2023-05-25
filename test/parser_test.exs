@@ -119,10 +119,12 @@ defmodule Expresso.ParserTest do
                 {:fun_call, _, ["add", [{:literal, _, 3}, {:literal, _, 4}]]}
               ]
             ]} = to_tokens("1:add(2):add(add(3,4))")
+
+    assert {:fun_call, _, ["size", [{:var, _, "some_map"}]]} = to_tokens("some_map:size()")
   end
 
-  test "parse errors are returned" do
-    assert {:error, %ParseError{} = err} = Expresso.parse("!%//()z^q")
+  test "parse errors are returned with an exception struct" do
+    assert {:error, %ParseError{}} = Expresso.parse("!%//()z^q")
   end
 
   test "can parse a quoted string" do

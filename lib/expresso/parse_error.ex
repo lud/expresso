@@ -1,3 +1,3 @@
 defmodule Expresso.ParseError do
-  defexception [:message]
+  defexception [:message, :lol]
 end
