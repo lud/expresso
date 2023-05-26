@@ -4,8 +4,8 @@ defmodule Expresso do
   alias Expresso.Parser
   alias Expresso.VM
 
-  def parse(code, _opts \\ []) do
-    Parser.parse(code)
+  def parse(code, opts \\ []) do
+    Parser.parse(code, opts)
   end
 
   def parse!(code, opts \\ []) do

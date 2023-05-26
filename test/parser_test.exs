@@ -5,7 +5,23 @@ defmodule Expresso.ParserTest do
   import Expresso.Test.Util
 
   defp to_tokens(code) do
-    get_tokens(code, print: true)
+    get_tokens(code, print: false)
+  end
+
+  defp get_tokens(code, opts \\ []) do
+    print? = Keyword.pop(opts, :print, false)
+
+    if print? do
+      IO.puts([IO.ANSI.yellow(), code, IO.ANSI.reset()])
+    end
+
+    value_eps = Expresso.parse!(code)
+
+    if print? do
+      IO.puts([IO.ANSI.blue(), "=> ", inspect(value_eps), IO.ANSI.reset()])
+    end
+
+    value_eps
   end
 
   defp assert_literal(expected, tokens) do
@@ -34,15 +50,15 @@ defmodule Expresso.ParserTest do
   end
 
   test "can parse a data path" do
-    assert {:var, [line: 0, column: 0], "a"} = to_tokens("a")
-    assert {:var, [line: 0, column: 0], "my_var"} = to_tokens("my_var")
+    assert {:name, [line: 0, column: 0], "a"} = to_tokens("a")
+    assert {:name, [line: 0, column: 0], "my_var"} = to_tokens("my_var")
 
     assert {
              :getprop,
              _,
              [
-               {:var, [line: 0, column: 0], "my_var"},
-               {:var, [line: 0, column: 7], "my_sub"}
+               {:name, [line: 0, column: 0], "my_var"},
+               {:name, [line: 0, column: 7], "my_sub"}
              ]
            } = to_tokens("my_var.my_sub")
 
@@ -51,21 +67,21 @@ defmodule Expresso.ParserTest do
              _,
              [
                {:getprop, _,
-                [{:var, [line: 0, column: 0], "my_var"}, {:var, [line: 0, column: 7], "my_sub"}]},
-               {:var, [line: 0, column: 14], "my_third"}
+                [{:name, [line: 0, column: 0], "my_var"}, {:name, [line: 0, column: 7], "my_sub"}]},
+               {:name, [line: 0, column: 14], "my_third"}
              ]
            } = to_tokens("my_var.my_sub.my_third")
   end
 
   test "can parse a data path with freeform keys" do
-    assert {:var, [line: 0, column: 0], "1"} = to_tokens("'1'")
+    assert {:name, [line: 0, column: 0], "1"} = to_tokens("'1'")
 
-    assert {:getprop, _, [{:var, [line: 0, column: 0], "1"}, {:var, _, "2"}]} =
+    assert {:getprop, _, [{:name, [line: 0, column: 0], "1"}, {:name, _, "2"}]} =
              to_tokens("'1'.'2'")
   end
 
   test "can parse a data path with mixed keys" do
-    assert {:getprop, _, [{:var, [line: 0, column: 0], "a"}, {:var, [line: 0, column: 2], "1"}]} =
+    assert {:getprop, _, [{:name, [line: 0, column: 0], "a"}, {:name, [line: 0, column: 2], "1"}]} =
              to_tokens("a.'1'")
 
     assert {
@@ -75,16 +91,16 @@ defmodule Expresso.ParserTest do
                {:getprop, _,
                 [
                   {:getprop, _,
-                   [{:var, [line: 0, column: 0], "a"}, {:var, [line: 0, column: 2], "b"}]},
-                  {:var, [line: 0, column: 4], "1"}
+                   [{:name, [line: 0, column: 0], "a"}, {:name, [line: 0, column: 2], "b"}]},
+                  {:name, [line: 0, column: 4], "1"}
                 ]},
-               {:var, [line: 0, column: 8], "c"}
+               {:name, [line: 0, column: 8], "c"}
              ]
            } = to_tokens("a.b.'1'.c")
   end
 
   test "can parse a function call" do
-    assert {:fun_call, _, ["call", [{:var, _, "some"}]]} = to_tokens("call(some)")
+    assert {:fun_call, _, ["call", [{:name, _, "some"}]]} = to_tokens("call(some)")
 
     assert {:fun_call, _, ["add", [{:literal, _, 1}, {:literal, _, 2}, {:literal, _, 3}]]} =
              to_tokens("add(1, 2, 3)")
@@ -108,7 +124,10 @@ defmodule Expresso.ParserTest do
     assert {:fun_call, _,
             [
               "add",
-              [{:fun_call, _, ["add", [{:literal, _, 1}, {:literal, _, 2}]]}, {:var, _, "my_var"}]
+              [
+                {:fun_call, _, ["add", [{:literal, _, 1}, {:literal, _, 2}]]},
+                {:name, _, "my_var"}
+              ]
             ]} = to_tokens("1:add(2):add(my_var)")
 
     assert {:fun_call, _,
@@ -120,7 +139,7 @@ defmodule Expresso.ParserTest do
               ]
             ]} = to_tokens("1:add(2):add(add(3,4))")
 
-    assert {:fun_call, _, ["size", [{:var, _, "some_map"}]]} = to_tokens("some_map:size()")
+    assert {:fun_call, _, ["size", [{:name, _, "some_map"}]]} = to_tokens("some_map:size()")
   end
 
   test "parse errors are returned with an exception struct" do
@@ -144,9 +163,9 @@ defmodule Expresso.ParserTest do
 
   test "can parse a lambda expression" do
     assert {:fun_call, [line: 0, column: 10],
-            ["map", [{:var, [line: 0, column: 0], "some_list"}, lambda]]} =
-             get_tokens("some_list:map(fn(x) => x end)")
+            ["map", [{:name, [line: 0, column: 0], "some_list"}, lambda]]} =
+             to_tokens("some_list:map(fn(x) => x end)")
 
-    assert {:lambda, _, [[{:var, [line: 0, column: 17], "x"}], {:var, _, "x"}]} = lambda
+    assert {:lambda, _, [[{:arg, [line: 0, column: 17], "x"}], {:name, _, "x"}]} = lambda
   end
 end

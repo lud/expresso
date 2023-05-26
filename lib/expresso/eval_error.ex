@@ -10,7 +10,7 @@ defmodule Expresso.EvalError do
 
   # -- Custom errors ----------------------------------------------------------
 
-  def key_error({:var, lc, key}, data) do
+  def key_error({:name, lc, key}, data) do
     build(:key_error, lc, %{key: key, map?: is_map(data), data: data})
   end
 

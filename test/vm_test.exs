@@ -5,22 +5,23 @@ defmodule Expresso.VMTest do
   import Expresso.Test.Util
 
   defp run(code, input \\ %{}) do
-    tokens = get_tokens(code, print: true)
+    ast = Expresso.parse!(code)
+    ast |> IO.inspect(label: ~S/ast/)
 
-    case VM.run(tokens, input) do
+    case VM.run(ast, input) do
       {:ok, value, _state} -> value
       {:error, e} -> raise EvalError.with_source(e, code)
     end
   end
 
   defp get_error(code, input \\ %{}) do
-    tokens = get_tokens(code)
-    assert {:error, reason} = VM.run(tokens, input)
+    ast = Expresso.parse!(code)
+    assert {:error, reason} = VM.run(ast, input)
     assert is_struct(reason, EvalError)
     reason = EvalError.with_source(reason, code)
     message = Exception.message(reason)
 
-    IO.puts([IO.ANSI.magenta(), message, IO.ANSI.reset()])
+    # IO.puts([IO.ANSI.magenta(), message, IO.ANSI.reset()])
 
     if String.contains?(message, "while retrieving Exception.message") do
       flunk("""
@@ -40,6 +41,8 @@ defmodule Expresso.VMTest do
   test "evaluate a path" do
     assert "hello" == run("greeting", %{"greeting" => "hello"})
     assert "hello" == run("greeting.english", %{"greeting" => %{"english" => "hello"}})
+    assert "hello" == run("'gree-a-ting'.english", %{"gree-a-ting" => %{"english" => "hello"}})
+    assert "hello" == run("'1'.'2'", %{"1" => %{"2" => "hello"}})
 
     # Errors when the data is not a map
 

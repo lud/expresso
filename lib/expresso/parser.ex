@@ -4,7 +4,17 @@ defmodule Expresso.Parser do
   # Combinators adapted from https://gist.github.com/sasa1977/beaeb43d39b055ecb93b937123b633d5
 
   require Record
-  Record.defrecord(:buffer, [:text, :line, :column, :level, :stack, :marks])
+
+  Record.defrecord(:buffer, [
+    :text,
+    :line,
+    :column,
+    :level,
+    :scopes,
+    :preserve_scopes,
+    :locks,
+    :on_eoi
+  ])
 
   defmacro debug(function) do
     {fun, arity} = __CALLER__.function
@@ -22,14 +32,14 @@ defmodule Expresso.Parser do
       Module.put_attribute(__CALLER__.module, :debugging, true)
 
       quote do
-        fn the_input ->
-          text = elem(the_input, 1)
+        fn the_buf ->
+          text = elem(the_buf, 1)
           fun = unquote(fun)
 
-          IO.puts("#{indentation(the_input)}#{inspect(fun)} #{inspect(text)}")
-          the_input = bufdown(the_input, unquote(fun))
+          IO.puts("#{indentation(the_buf)}#{inspect(fun)} #{inspect(text)}")
+          the_buf = bufdown(the_buf, unquote(fun))
           sub = unquote(function)
-          retval = sub.(the_input)
+          retval = sub.(the_buf)
 
           case retval do
             {:ok, retval, rest} ->
@@ -38,7 +48,7 @@ defmodule Expresso.Parser do
               {:ok, retval, rest}
 
             {:error, reason} = err when is_binary(reason) ->
-              # IO.puts("#{indentation(the_input, -1)}/#{unquote(fun)} FAIL")
+              # IO.puts("#{indentation(the_buf, -1)}/#{unquote(fun)} FAIL")
               err
           end
         end
@@ -46,9 +56,10 @@ defmodule Expresso.Parser do
     end
   end
 
-  def parse(input) do
+  def parse(input, opts \\ []) do
+    on_eoi = Keyword.get(opts, :on_eoi, nil)
+    buf = consume_whitespace(new_buffer(input, 0, 0, on_eoi))
     parser = expr()
-    buf = consume_whitespace(buffer(input, 0, 0))
 
     case parser.(buf) do
       {:ok, result, rest} ->
@@ -75,10 +86,28 @@ defmodule Expresso.Parser do
     end
   end
 
+  defp reg_scope(tag, parser) do
+    fn buf ->
+      case parser.(buf) do
+        {:ok, result, rest} -> {:ok, result, put_scope(rest, tag, result)}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp reg_scope_name(tag, parser) do
+    fn buf ->
+      case parser.(buf) do
+        {:ok, {:name, _, name} = result, rest} -> {:ok, result, put_scope(rest, tag, name)}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   defp lazy(combinator) do
-    fn input ->
+    fn buf ->
       parser = combinator.()
-      parser.(input)
+      parser.(buf)
     end
   end
 
@@ -90,7 +119,7 @@ defmodule Expresso.Parser do
       function_call(),
       float(),
       integer(),
-      identifier(),
+      root_var(),
       quoted_string()
     ])
   end
@@ -140,11 +169,9 @@ defmodule Expresso.Parser do
   defp getprop do
     sequence([
       char(?.),
-      identifier()
+      reg_scope_name(:getprop, name())
     ])
-    |> map(fn [_, var] ->
-      var
-    end)
+    |> map(fn [_, name] -> name end)
   end
 
   defp exclusive(tag, parser) do
@@ -184,14 +211,14 @@ defmodule Expresso.Parser do
 
   defp lambda_args do
     separated_list(
-      token(inline_identifier() |> map(fn key, buf -> {:var, lc(buf), key} end)),
+      token(plaintext_name() |> map(fn key, buf -> {:arg, lc(buf), key} end)),
       char(?,)
     )
   end
 
   defp function_call do
     sequence([
-      inline_identifier(),
+      plaintext_name(),
       char(?(),
       choice([
         separated_list(token(sub_expr()), char(?,)),
@@ -202,20 +229,19 @@ defmodule Expresso.Parser do
     |> map(fn [fun, _, args, _], buf -> {:fun_call, lc(buf), [fun, args]} end)
   end
 
-  defp identifier() do
-    choice([
-      inline_identifier(),
-      sequence([
-        char(?'),
-        many1(not_char(?')),
-        char(?')
-      ])
-      |> map(fn [_, chars, _] -> chars end)
-    ])
-    |> map(fn chars, buf -> {:var, lc(buf), to_string(chars)} end)
+  defp root_var do
+    reg_scope_name(:variable, name())
   end
 
-  defp inline_identifier do
+  defp name do
+    choice([
+      plaintext_name(),
+      quoted_name()
+    ])
+    |> map(fn chars, buf -> {:name, lc(buf), to_string(chars)} end)
+  end
+
+  defp plaintext_name do
     sequence([
       choice([ascii_letter(), char(?_)]),
       many0(inline_key_char_num())
@@ -225,14 +251,23 @@ defmodule Expresso.Parser do
     end)
   end
 
+  defp quoted_name do
+    sequence([
+      char(?'),
+      many1(not_char(?')),
+      char(?')
+    ])
+    |> map(fn [_, chars, _] -> chars end)
+  end
+
   defp inline_key_char_num(), do: choice([ascii_letter(), char(?_), digit()])
 
   defp keyword(expected) when is_atom(expected) do
     str = to_string(expected)
 
-    inline_identifier()
+    plaintext_name()
     |> token()
-    |> satisfy(fn identifier -> identifier == str end)
+    |> satisfy(fn plain -> plain == str end)
     |> map(fn _ -> expected end)
   end
 
@@ -324,36 +359,46 @@ defmodule Expresso.Parser do
   end
 
   defp sequence(parsers) do
-    fn input ->
-      case parsers do
-        [] ->
-          {:ok, [], input}
+    fn buf ->
+      # buf = preserve_scopes(buf)
 
-        [first_parser | other_parsers] ->
-          with {:ok, first_term, rest} <- first_parser.(input),
-               {:ok, other_terms, rest} <- sequence(other_parsers).(rest),
-               do: {:ok, [first_term | other_terms], rest}
+      case do_sequence(buf, parsers) do
+        # {:ok, terms, rest} -> {:ok, terms, unpreserve_scopes(rest)}
+        {:ok, terms, rest} -> {:ok, terms, rest}
+        {:error, _} = err -> err
       end
+    end
+  end
+
+  defp do_sequence(buf, parsers) do
+    case parsers do
+      [] ->
+        {:ok, [], buf}
+
+      [first_parser | other_parsers] ->
+        with {:ok, first_term, rest} <- first_parser.(buf),
+             {:ok, other_terms, rest} <- do_sequence(rest, other_parsers),
+             do: {:ok, [first_term | other_terms], rest}
     end
   end
 
   defp map(parser, mapper) do
     fn
-      input when is_function(mapper, 1) ->
-        with {:ok, term, rest} <- parser.(input),
+      buf when is_function(mapper, 1) ->
+        with {:ok, term, rest} <- parser.(buf),
              do: {:ok, mapper.(term), rest}
 
-      input when is_function(mapper, 2) ->
-        with {:ok, term, rest} <- parser.(input),
-             do: {:ok, mapper.(term, input), rest}
+      buf when is_function(mapper, 2) ->
+        with {:ok, term, rest} <- parser.(buf),
+             do: {:ok, mapper.(term, buf), rest}
     end
   end
 
   defp many0(parser) do
-    fn input ->
-      case parser.(input) do
+    fn buf ->
+      case parser.(buf) do
         {:error, _reason} ->
-          {:ok, [], input}
+          {:ok, [], buf}
 
         {:ok, first_term, rest} ->
           {:ok, other_terms, rest} = many0(parser).(rest)
@@ -363,9 +408,9 @@ defmodule Expresso.Parser do
   end
 
   defp maybe(parser) do
-    fn input ->
-      case parser.(input) do
-        {:error, _reason} -> {:ok, [], input}
+    fn buf ->
+      case parser.(buf) do
+        {:error, _reason} -> {:ok, [], buf}
         {:ok, term, rest} -> {:ok, [term], rest}
       end
     end
@@ -379,14 +424,14 @@ defmodule Expresso.Parser do
   end
 
   defp choice(parsers) do
-    fn input ->
+    fn buf ->
       case parsers do
         [] ->
           {:error, "no parser suceeded"}
 
         [first_parser | other_parsers] ->
-          with {:error, _reason} <- first_parser.(input),
-               do: choice(other_parsers).(input)
+          with {:error, _reason} <- first_parser.(buf),
+               do: choice(other_parsers).(buf)
       end
     end
   end
@@ -399,8 +444,8 @@ defmodule Expresso.Parser do
   defp not_char(rejected), do: satisfy(char(), fn char -> char != rejected end)
 
   defp satisfy(parser, acceptor) do
-    fn input ->
-      with {:ok, term, rest} <- parser.(input) do
+    fn buf ->
+      with {:ok, term, rest} <- parser.(buf) do
         if acceptor.(term),
           do: {:ok, term, rest},
           else: {:error, "term rejected"}
@@ -409,60 +454,123 @@ defmodule Expresso.Parser do
   end
 
   defp char() do
-    fn input ->
-      case take(input) do
+    fn buf ->
+      case take(buf) do
         :EOI -> {:error, "unexpected end of input"}
         {char, buf} -> {:ok, char, buf}
       end
     end
   end
 
-  def buffer(text, line, column) do
-    buffer(text: text, line: line, column: column, level: 0, stack: [], marks: %{})
+  def new_buffer(text, line, column, on_eoi) do
+    # end
+
+    # def buffer(text, line, column) do
+    buffer(
+      text: text,
+      line: line,
+      column: column,
+      level: 0,
+      preserve_scopes: 0,
+      scopes: [],
+      locks: %{},
+      on_eoi: on_eoi
+    )
   end
 
-  def buffer(buf, text, line, column) do
-    buffer(buf, text: text, line: line, column: column)
-  end
-
-  defp take(buffer(text: text, line: line, column: column) = buf) do
+  defp take(buffer(text: text, line: line, column: column, on_eoi: on_eoi, scopes: scopes) = buf) do
     case text do
-      <<?\n, rest::binary>> -> {?\n, buffer(buf, rest, line + 1, 0)}
-      <<char::utf8, rest::binary>> -> {char, buffer(buf, rest, line, column + 1)}
-      "" -> :EOI
+      <<?\n, rest::binary>> ->
+        {?\n, buffer(buf, text: rest, line: line + 1, column: 0)}
+
+      <<char::utf8, rest::binary>> ->
+        {char, buffer(buf, text: rest, line: line, column: column + 1)}
+
+      "" ->
+        scopes |> IO.inspect(label: ~S/scopes on EOI/)
+        apply_hook(on_eoi, buf)
+        :EOI
     end
+  end
+
+  defp apply_hook(nil, _), do: :ok
+
+  defp apply_hook(f, buf) do
+    f |> IO.inspect(label: ~S/apply_hook/)
+    f.(buf)
   end
 
   defp lc(buffer(line: line, column: column)), do: [line: line, column: column]
 
   def empty_buffer?(buffer(text: text)), do: text == ""
 
-  defp forbid(buffer(marks: marks, line: l, column: c) = buf, k),
-    do: buffer(buf, marks: Map.put(marks, {k, l, c}, true))
+  defp forbid(buffer(locks: locks, line: l, column: c) = buf, k),
+    do: buffer(buf, locks: Map.put(locks, {k, l, c}, true))
 
-  defp unforbid(buffer(marks: marks, line: l, column: c) = buf, k),
-    do: buffer(buf, marks: Map.delete(marks, {k, l, c}))
+  defp unforbid(buffer(locks: locks, line: l, column: c) = buf, k),
+    do: buffer(buf, locks: Map.delete(locks, {k, l, c}))
 
-  defp forbidden?(buffer(marks: marks, line: l, column: c), k),
-    do: Map.get(marks, {k, l, c}, false)
+  defp forbidden?(buffer(locks: locks, line: l, column: c), k),
+    do: Map.get(locks, {k, l, c}, false)
 
-  if Module.get_attribute(__MODULE__, :debugging) do
-    # defp debug_stack(buffer(stack: stack)),
-    #   do: stack |> Enum.reverse() |> Enum.map_join("/", &to_string/1)
+  # @dialyzer {:nowarn_function, {__new__type_check_return_type_wrapper__: 1}
 
-    defp bufdown(buffer(level: level, stack: stack) = buf, fun),
-      do: buffer(buf, level: level + 1, stack: [fun | stack])
+  defp bufdown(buffer(level: level) = buf, _fun),
+    do: buffer(buf, level: level + 1)
 
-    defp bufup(buffer(level: level) = buf) when level > 0, do: buffer(buf, level: level - 1)
-    defp indentation(_, add \\ 0)
-    defp indentation(buffer(level: level), add), do: indentation(level, add)
-    defp indentation(level, add), do: String.duplicate("  ", level + add)
-  end
+  defp bufup(buffer(level: level) = buf) when level > 0, do: buffer(buf, level: level - 1)
+  defp indentation(_, add \\ 0)
+  defp indentation(buffer(level: level), add), do: indentation(level, add)
+  defp indentation(level, add), do: String.duplicate("  ", level + add)
 
   defp consume_whitespace(buf) do
     case take(buf) do
       {char, buf} when char in [?\n, ?\t, ?\s, ?\r] -> consume_whitespace(buf)
       _ -> buf
     end
+  end
+
+  def buffer_scope(buffer(scopes: scope)), do: scope
+
+  defp put_scope(buffer(text: text) = buf, scope) do
+    put_scope(buf, scope, text)
+  end
+
+  defp put_scope(buffer(text: text, scopes: scopes) = buf, scope, value) do
+    IO.puts("enter scope #{inspect(scope)}: #{inspect(value)}, text: #{inspect(text)}")
+    new_scopes = [{scope, value} | scopes]
+    new_scopes |> IO.inspect(label: ~S/new_scopes/)
+    buffer(buf, scopes: new_scopes)
+  end
+
+  # preserve_scopes is not the number of scopes to preserve, it is a semaphore
+  # that is incremented by each preserving sequence.
+  defp drop_scope(buffer(preserve_scopes: 0, scopes: [left | scopes], text: text) = buf) do
+    IO.puts("leave scope #{inspect(left)}, text: #{inspect(text)}")
+    buffer(buf, scopes: scopes)
+  end
+
+  defp drop_scope(buffer(scopes: [left | _], text: text) = buf) do
+    IO.puts("keep scope #{inspect(left)}, text: #{inspect(text)}")
+    buf
+  end
+
+  defp preserve_scopes(buffer(preserve_scopes: depth, scopes: scopes) = buf) do
+    new_depth = depth + 1
+    buffer(buf, preserve_scopes: new_depth, scopes: [new_depth | scopes])
+  end
+
+  defp unpreserve_scopes(buffer(preserve_scopes: depth, scopes: scopes) = buf) do
+    new_depth = depth - 1
+    buffer(buf, preserve_scopes: new_depth, scopes: cleanup_scopes(scopes, depth))
+  end
+
+  # drop all scopes until it finds the given scope, then drop that scope too and
+  # return the rest
+  defp cleanup_scopes([same | t], same), do: t
+
+  defp cleanup_scopes([left | t], milestone) do
+    IO.puts("remove scope #{inspect(left)}")
+    cleanup_scopes(t, milestone)
   end
 end

@@ -24,7 +24,7 @@ defmodule Expresso.VM do
     literal(value, state)
   end
 
-  defp eval({:var, _, _} = var, state) do
+  defp eval({:name, _, _} = var, state) do
     {value, state} = lookup_var(state, var)
     {value, state}
   end
@@ -73,9 +73,9 @@ defmodule Expresso.VM do
       raise EvalError.lambda_argument_count_error(k, n, arg_lc || lc)
   end
 
-  defp do_zip_args([{:var, _, k} | ks], [v | vs], n), do: [{k, v} | do_zip_args(ks, vs, n + 1)]
+  defp do_zip_args([{:arg, _, k} | ks], [v | vs], n), do: [{k, v} | do_zip_args(ks, vs, n + 1)]
   defp do_zip_args([], _, _), do: []
-  defp do_zip_args([{:var, lc, k} | _], [], n), do: throw({:missing_lambda_arg, k, n, lc})
+  defp do_zip_args([{:arg, lc, k} | _], [], n), do: throw({:missing_lambda_arg, k, n, lc})
 
   # -- Reading values from scopes ---------------------------------------------
 
@@ -88,7 +88,7 @@ defmodule Expresso.VM do
     deref(vars, var)
   end
 
-  defp deref_scope([scope | _], _vars, {:var, _, k}) when is_map_key(scope, k) do
+  defp deref_scope([scope | _], _vars, {:name, _, k}) when is_map_key(scope, k) do
     Map.fetch!(scope, k)
   end
 
@@ -96,7 +96,7 @@ defmodule Expresso.VM do
     deref_scope(scopes, vars, var)
   end
 
-  defp deref(kv, {:var, _, k}) when is_map_key(kv, k) do
+  defp deref(kv, {:name, _, k}) when is_map_key(kv, k) do
     Map.fetch!(kv, k)
   end
 
@@ -164,7 +164,7 @@ defmodule Expresso.VM do
               {[rest, first, fun], args, state}
 
             [] ->
-              [{:var, lc, _} | _] = raw_args
+              [{:name, lc, _} | _] = raw_args
 
               raise EvalError.empty_error(
                       lc,
