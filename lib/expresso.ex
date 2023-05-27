@@ -36,8 +36,6 @@ defmodule Expresso do
   end
 
   def get_completions(code, data \\ %{}) do
-    IO.puts([?\n, IO.ANSI.yellow(), code, IO.ANSI.reset()])
-
     with {:ok, tokens} <- tokenize(code) do
       {:ok, Completions.from_tokens(tokens, data)}
     end
