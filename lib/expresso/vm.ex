@@ -133,18 +133,46 @@ defmodule Expresso.VM do
     %{state | scope: scope}
   end
 
+  # -- Debugging --------------------------------------------------------------
+
+  if @enable_debug do
+    defp debug(%{debug: false}, _ast, _data) do
+      nil
+    end
+
+    defp debug(%{debug: true}, ast, data) do
+      print_debug(ast, data)
+    end
+
+    defp print_debug(tag, data) do
+      IO.puts("#{tag} #{inspect(data)}")
+    end
+  else
+    defp debug(_state, _ast, _data) do
+      nil
+    end
+  end
+
+  # -- Managing libraries of functions ----------------------------------------
+
+  def library_info(module, key) do
+    module.__vm_library__(key)
+  end
+
   # -- Standard Library functions ---------------------------------------------
+
+  # This module is itself defining a library module
 
   use Expresso.VM.Library
 
   # defp fun_impl("replace", args, state) do
-  #   {subject, args, state} = pull_arg(args, state, &loose_string/1, 1)
-  #   {search, args, state} = pull_arg(args, state, &loose_string/1, 2)
-  #   {replacement, _args, state} = pull_arg(args, state, &loose_string/1, 3)
+  #   {subject, args, state} = pull_arg(args, state, &as_string/1, 1)
+  #   {search, args, state} = pull_arg(args, state, &as_string/1, 2)
+  #   {replacement, _args, state} = pull_arg(args, state, &as_string/1, 3)
   #   {String.replace(subject, search, replacement), state}
   # end
 
-  function replace(subject :: loose_string, search :: loose_string, replacement :: loose_string) do
+  function replace(subject :: as_string, search :: as_string, replacement :: as_string) do
     String.replace(subject, search, replacement)
   end
 
@@ -160,7 +188,7 @@ defmodule Expresso.VM do
   function add(a :: number, b :: number), do: a + b
 
   defp __vm_function__("for_each", args, state) do
-    {[list, fun], _, state} = pull_args(args, state, [&__vm_type__list/1, &__vm_type__lambda/1])
+    {[list, fun], _, state} = pull_args(args, state, [:list, :lambda])
 
     list
     |> Enum.reduce({[], state}, fn elem, {values, state} ->
@@ -174,11 +202,10 @@ defmodule Expresso.VM do
     {[list, init, fun], _args, state} =
       case raw_args do
         [_, _, _ | _] ->
-          pull_args(raw_args, state, [&__vm_type__list/1, &__vm_type__any/1, &__vm_type__lambda/1])
+          pull_args(raw_args, state, [:list, :any, :lambda])
 
         _ ->
-          {[list, fun], args, state} =
-            pull_args(raw_args, state, [&__vm_type__list/1, &__vm_type__lambda/1])
+          {[list, fun], args, state} = pull_args(raw_args, state, [:list, :lambda])
 
           case list do
             [first | rest] ->
@@ -200,25 +227,5 @@ defmodule Expresso.VM do
       {new_acc, state} = fun.([elem, acc], state)
       {new_acc, state}
     end)
-  end
-
-  # -- Debugging --------------------------------------------------------------
-
-  if @enable_debug do
-    defp debug(%{debug: false}, _ast, _data) do
-      nil
-    end
-
-    defp debug(%{debug: true}, ast, data) do
-      print_debug(ast, data)
-    end
-
-    defp print_debug(tag, data) do
-      IO.puts("#{tag} #{inspect(data)}")
-    end
-  else
-    defp debug(_state, _ast, _data) do
-      nil
-    end
   end
 end

@@ -4,6 +4,7 @@ defmodule Expresso.TokenizerTest do
 
   defp to_tokens(code) do
     assert {:ok, tokens} = Expresso.Tokenizer.tokenize(code)
+
     tokens
   end
 
@@ -34,6 +35,7 @@ defmodule Expresso.TokenizerTest do
 
   test "can tokenize a data path" do
     assert [{:name, _, "a"}] = to_tokens("a")
+    assert [{:name, _, "a"}] = to_tokens("   a   ")
 
     assert [{:name, _, "my_var"}] = to_tokens("my_var")
 

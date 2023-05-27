@@ -1,4 +1,5 @@
 defmodule Expresso do
+  alias Expresso.Completions
   alias Expresso.Tokenizer
   alias Expresso.EvalError
   alias Expresso.ParseError
@@ -32,5 +33,13 @@ defmodule Expresso do
 
   def eval_ast(ast, opts \\ []) do
     VM.run(ast, opts)
+  end
+
+  def get_completions(code, data \\ %{}) do
+    IO.puts([?\n, IO.ANSI.yellow(), code, IO.ANSI.reset()])
+
+    with {:ok, tokens} <- tokenize(code) do
+      {:ok, Completions.from_tokens(tokens, data)}
+    end
   end
 end

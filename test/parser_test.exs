@@ -2,7 +2,6 @@ defmodule Expresso.ParserTest do
   alias Expresso.Tokenizer
   alias Expresso.ParseError
   alias Expresso.Parser
-  # TODO async true
   use ExUnit.Case, async: true
 
   defp to_ast(code) do

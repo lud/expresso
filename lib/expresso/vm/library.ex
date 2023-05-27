@@ -1,7 +1,7 @@
 defmodule Expresso.VM.Library do
   @arg_types ~w(
     string
-    loose_string
+    as_string
     object
     list
     number
@@ -12,38 +12,46 @@ defmodule Expresso.VM.Library do
     quote location: :keep do
       import unquote(__MODULE__)
       @before_compile unquote(__MODULE__)
-      # Injecting all functions types to speed up things
-      defp __vm_type__loose_string(arg) when is_binary(arg), do: {:ok, arg}
-      defp __vm_type__loose_string(arg) when is_integer(arg), do: {:ok, Integer.to_string(arg)}
-      defp __vm_type__loose_string(arg) when is_float(arg), do: {:ok, Float.to_string(arg)}
+      Module.register_attribute(__MODULE__, :vm_function, accumulate: true)
 
-      defp __vm_type__loose_string(arg),
+      # Injecting all functions types to speed up things
+
+      @doc false
+      def __vm_type__(:as_string, arg) when is_binary(arg), do: {:ok, arg}
+      def __vm_type__(:as_string, arg) when is_integer(arg), do: {:ok, Integer.to_string(arg)}
+      def __vm_type__(:as_string, arg) when is_float(arg), do: {:ok, Float.to_string(arg)}
+
+      def __vm_type__(:as_string, arg),
         do: {:error, "cannot use " <> typeof(arg) <> " as a string"}
 
-      defp __vm_type__object(arg) when is_map(arg), do: {:ok, arg}
-      defp __vm_type__object(arg), do: {:error, "not an object"}
+      def __vm_type__(:object, arg) when is_map(arg), do: {:ok, arg}
+      def __vm_type__(:object, arg), do: {:error, "not an object"}
 
-      defp __vm_type__string(arg) when is_binary(arg), do: {:ok, arg}
-      defp __vm_type__string(arg), do: {:error, "not a string"}
+      def __vm_type__(:string, arg) when is_binary(arg), do: {:ok, arg}
+      def __vm_type__(:string, arg), do: {:error, "not a string"}
 
-      defp __vm_type__list(arg) when is_list(arg), do: {:ok, arg}
-      defp __vm_type__list(arg), do: {:error, "not a list"}
+      def __vm_type__(:list, arg) when is_list(arg), do: {:ok, arg}
+      def __vm_type__(:list, arg), do: {:error, "not a list"}
 
-      defp __vm_type__number(arg) when is_integer(arg) when is_float(arg), do: {:ok, arg}
-      defp __vm_type__number(arg), do: {:error, "not a number"}
+      def __vm_type__(:number, arg) when is_integer(arg) when is_float(arg), do: {:ok, arg}
+      def __vm_type__(:number, arg), do: {:error, "not a number"}
 
-      defp __vm_type__lambda({:lambda, f}) when is_function(f, 2), do: {:ok, f}
-      defp __vm_type__lambda(_), do: {:error, "not a function"}
+      def __vm_type__(:lambda, {:lambda, f}) when is_function(f, 2), do: {:ok, f}
+      def __vm_type__(:lambda, _), do: {:error, "not a function"}
 
-      defp __vm_type__any({:lambda, f}) when is_function(f, 2), do: {:ok, f}
-      defp __vm_type__any(arg), do: {:ok, arg}
+      def __vm_type__(:any, {:lambda, f}) when is_function(f, 2), do: {:ok, f}
+      def __vm_type__(:any, arg), do: {:ok, arg}
 
-      defp __vm_union_type__(arg, casters), do: __vm_union_type__(arg, casters, [])
+      def __vm_type__({:union_type, subtypes}, arg) do
+        __vm_union_type__(arg, subtypes)
+      end
 
-      defp __vm_union_type__(arg, [c | casters], reasons) do
-        case c.(arg) do
+      defp __vm_union_type__(arg, subtypes), do: __vm_union_type__(arg, subtypes, [])
+
+      defp __vm_union_type__(arg, [s | subtypes], reasons) do
+        case __vm_type__(s, arg) do
           {:ok, value} -> {:ok, value}
-          {:error, reason} -> __vm_union_type__(arg, casters, [reason | reasons])
+          {:error, reason} -> __vm_union_type__(arg, subtypes, [reason | reasons])
         end
       end
 
@@ -56,11 +64,12 @@ defmodule Expresso.VM.Library do
       defp typeof(binary) when is_binary(binary), do: "binary"
       defp typeof(integer) when is_integer(integer), do: "integer"
       defp typeof(float) when is_float(float), do: "float"
+      # defp typeof(nil), do: "null"
 
-      defp pull_arg([arg | args], state, caster, arg_num) do
+      defp pull_arg([arg | args], state, type, arg_num) do
         {arg_val, state} = eval(arg, state)
 
-        case caster.(arg_val) do
+        case __vm_type__(type, arg_val) do
           {:ok, value} ->
             {value, args, state}
 
@@ -118,12 +127,12 @@ defmodule Expresso.VM.Library do
     the_state = Macro.var(@call_state, mod)
     the_args = Macro.var(@call_args, mod)
 
-    {unpack_vars, pack_types} =
+    {match_vars_list, types_list} =
       typed_args
       |> Enum.map(fn
         {:"::", _, [var, type]} ->
-          caster = build_caster(type)
-          {var, caster}
+          vm_type = build_vm_type(type)
+          {var, vm_type}
 
         other ->
           reraise ArgumentError.exception(
@@ -135,45 +144,44 @@ defmodule Expresso.VM.Library do
 
     pulling =
       quote do
-        {unquote(unpack_vars), _, unquote(the_state)} =
-          pull_args(unquote(the_args), unquote(the_state), unquote(pack_types))
+        {unquote(match_vars_list), _, unquote(the_state)} =
+          pull_args(unquote(the_args), unquote(the_state), unquote(types_list))
       end
 
     quote do
+      @vm_function {unquote(name), __MODULE__, unquote(Macro.escape(types_list))}
       defp __vm_function__(unquote(name), unquote(the_args), unquote(the_state)) do
         unquote(pulling)
         return = unquote(body)
         {return, unquote(the_state)}
       end
     end
-
-    # |> tap(&IO.puts(Macro.to_string(&1)))
+    |> tap(&IO.puts(Macro.to_string(&1)))
   end
 
-  defp build_caster({:|, _, types}) do
-    subcasters = Enum.map(types, &build_caster/1)
-
-    quote do
-      fn the_val -> __vm_union_type__(the_val, unquote(subcasters)) end
-    end
+  defp build_vm_type({:|, _, types}) do
+    {:union_type, Enum.map(types, &build_vm_type/1)}
   end
 
-  defp build_caster({type_fun, _, _}) do
-    ensure_type_fun(type_fun)
-    vm_type_fun = :"__vm_type__#{type_fun}"
-    {:&, [], [{:/, [context: Elixir, imports: []], [{vm_type_fun, [], Elixir}, 1]}]}
+  defp build_vm_type({t, _, _}) do
+    ensure_type_exists(t)
+    t
   end
 
-  defp ensure_type_fun(key) when key in @arg_types, do: :ok
+  defp ensure_type_exists(key) when key in @arg_types, do: :ok
 
-  defp ensure_type_fun(key) do
-    raise ArgumentError, "unknown VM function type #{inspect(key)}"
+  defp ensure_type_exists(key) do
+    raise ArgumentError, "unknown VM type #{inspect(key)}"
   end
 
   defmacro __before_compile__(_) do
     quote do
       defp __vm_function__(name, _, state) do
         throw(:undefined_function_error)
+      end
+
+      def __vm_library__(:functions) do
+        @vm_function
       end
     end
   end
