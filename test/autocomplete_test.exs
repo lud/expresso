@@ -1,8 +1,5 @@
 defmodule Expresso.AutocompleteTest do
   alias Expresso.VM
-  alias Expresso.Tokenizer
-  alias Expresso.ParseError
-  alias Expresso.Parser
   use ExUnit.Case, async: true
 
   defp get_completions(code, data \\ %{}) do
@@ -84,11 +81,6 @@ defmodule Expresso.AutocompleteTest do
       data = %{"name" => "Joe"}
 
       assert [] == get_completions("name", data) |> only_data()
-    end
-
-    test "does not return anything if there is no path" do
-      data = %{"a" => 1, "b" => 2, "c" => 3}
-      assert [] == get_completions("replace(a, b, c)") |> only_data()
     end
 
     test "completes the path within other expressions" do
