@@ -4,68 +4,56 @@ defmodule Expresso.Parser do
   # Combinators adapted from https://gist.github.com/sasa1977/beaeb43d39b055ecb93b937123b633d5
 
   require Record
-  Record.defrecord(:buffer, [:text, :line, :column, :level, :stack, :marks])
 
-  defmacro debug(function) do
-    {fun, arity} = __CALLER__.function
+  Record.defrecordp(:context,
+    tokens: [],
+    marks: %{},
+    consumed: 0,
+    level: 0,
+    trace: [],
+    debug: false,
+    on_failure: nil,
+    on_consumed: nil,
+    on_attempt: nil
+  )
 
-    if Mix.env() == :prod do
-      IO.warn(
-        "debug called for #{fun}/#{arity} in :prod compile environment",
-        __CALLER__
-      )
+  def parse_tokens(tokens, opts \\ []) do
+    parser = expr()
+    ctx = context(tokens: tokens)
+    debug? = Keyword.get(opts, :debug, false)
+    ctx = if debug?, do: setup_debug(ctx), else: ctx
 
-      quote do
-        unquote(function)
+    result = parser.(ctx)
+
+    debug_info = clean_get_debug()
+
+    final_ctx =
+      case result do
+        {:ok, _, context(tokens: []) = ctx} -> ctx
+        _ -> nil
       end
-    else
-      Module.put_attribute(__CALLER__.module, :debugging, true)
 
-      quote do
-        fn the_input ->
-          text = elem(the_input, 1)
-          fun = unquote(fun)
+    if debug?, do: format_debug(debug_info, final_ctx)
 
-          IO.puts("#{indentation(the_input)}#{inspect(fun)} #{inspect(text)}")
-          the_input = bufdown(the_input, unquote(fun))
-          sub = unquote(function)
-          retval = sub.(the_input)
-
-          case retval do
-            {:ok, retval, rest} ->
-              IO.puts("#{indentation(rest)}=> #{inspect(fun)} = #{inspect(retval)}")
-              rest = bufup(rest)
-              {:ok, retval, rest}
-
-            {:error, reason} = err when is_binary(reason) ->
-              # IO.puts("#{indentation(the_input, -1)}/#{unquote(fun)} FAIL")
-              err
-          end
-        end
-      end
-    end
+    return(result)
+  after
+    clean_get_debug()
   end
 
-  def parse(input) do
-    parser = expr()
-    buf = consume_whitespace(buffer(input, 0, 0))
+  defp return(result) do
+    case result do
+      {:ok, result, context(tokens: [])} ->
+        {:ok, result}
 
-    case parser.(buf) do
-      {:ok, result, rest} ->
-        case empty_buffer?(consume_whitespace(rest)) do
-          true ->
-            {:ok, result}
+      {:ok, result, context(tokens: rest)} ->
+        {:error,
+         ParseError.exception(
+           message: """
+           extra code: #{inspect(rest)}
 
-          false ->
-            {:error,
-             ParseError.exception(
-               message: """
-               buffer not empty: #{inspect(buffer(rest, :text))}
-
-               tokens: #{inspect(result)}
-               """
-             )}
-        end
+           tokens: #{inspect(result)}
+           """
+         )}
 
       {:error, reason} when is_binary(reason) ->
         {:error, ParseError.exception(message: reason)}
@@ -73,6 +61,70 @@ defmodule Expresso.Parser do
       {:error, reason} ->
         {:error, ParseError.exception(message: inspect(reason))}
     end
+  end
+
+  defp setup_debug(ctx) do
+    Process.put(failures_pkey(), [])
+
+    context(ctx,
+      debug: true,
+      # Uses the level and tag given by the debug() parser and puts them in the current trace
+      on_consumed: fn tag, data, context(trace: trace, level: level) = ctx ->
+        context(ctx, trace: [{:took, level, tag, data} | trace])
+      end,
+      on_attempt: fn tag, context(trace: trace, level: level) = ctx ->
+        context(ctx, trace: [{:attempt, level, tag} | trace])
+      end,
+      # Takes the current trace and puts it in the process dictionnary
+      on_failure: fn
+        context(consumed: c, trace: trace, level: level), reason ->
+          trace_with_failure = [{:failure, level, reason} | trace]
+          traces = Process.get(failures_pkey(), [])
+          Process.put(failures_pkey(), [{:trace, c, trace_with_failure} | traces])
+          :ok
+      end
+    )
+  end
+
+  defp failures_pkey, do: {__MODULE__, :failures}
+
+  defp clean_get_debug do
+    Process.delete(failures_pkey())
+  end
+
+  defp format_debug(nil, _) do
+    IO.puts("debug info is nil")
+  end
+
+  defp format_debug([], _) do
+    IO.puts("debug info is empty")
+  end
+
+  defp format_debug(traces, result) do
+    trace =
+      case result do
+        context(trace: trace) ->
+          trace
+
+        _ ->
+          {_, _, trace} = Enum.max_by(traces, fn {:trace, consumed, _} -> consumed end)
+          trace
+      end
+
+    # The the farthest trace we have
+    trace
+    |> :lists.reverse()
+    |> Enum.map_intersperse("\n", fn
+      {:took, level, tag, data} ->
+        [List.duplicate(" ", level * 2), inspect(tag), " = ", inspect(data)]
+
+      {:attempt, level, tag} ->
+        [List.duplicate(" ", level * 2), inspect(tag)]
+
+      {:failure, level, reason} ->
+        [List.duplicate(" ", level * 2), "FAIL ", inspect(reason)]
+    end)
+    |> IO.puts()
   end
 
   defp lazy(combinator) do
@@ -83,21 +135,21 @@ defmodule Expresso.Parser do
   end
 
   defp expr() do
+    # debug :expr,
     choice([
       lambda_expr(),
       method_call_chain(),
       getprop_chain(),
       function_call(),
-      float(),
-      integer(),
-      identifier(),
-      quoted_string()
+      literal(),
+      name()
     ])
   end
 
   defp sub_expr, do: lazy(fn -> expr() end)
 
   defp method_call_chain do
+    # debug :method_call_chain,
     exclusive(
       :in_method_call_chain,
       sequence([
@@ -112,7 +164,16 @@ defmodule Expresso.Parser do
     end)
   end
 
+  defp method_call do
+    sequence([
+      token(:colon),
+      function_call()
+    ])
+    |> map(fn [_, {:fun_call, lc, [fun, args]}] -> {:method_call, lc, [fun, args]} end)
+  end
+
   defp getprop_chain do
+    # debug :getprop_chain,
     exclusive(
       :in_getprop_chain,
       sequence([
@@ -127,20 +188,10 @@ defmodule Expresso.Parser do
     end)
   end
 
-  defp method_call do
-    sequence([
-      token(char(?:)),
-      function_call()
-    ])
-    |> map(fn [_, {:fun_call, lc, [fun, args]}] ->
-      {:method_call, lc, [fun, args]}
-    end)
-  end
-
   defp getprop do
     sequence([
-      char(?.),
-      identifier()
+      token(:.),
+      token(:name)
     ])
     |> map(fn [_, var] ->
       var
@@ -148,20 +199,17 @@ defmodule Expresso.Parser do
   end
 
   defp exclusive(tag, parser) do
-    fn buf ->
-      case forbidden?(buf, tag) do
+    fn ctx ->
+      case forbidden?(ctx, tag) do
         true ->
           {:error, "exclusive mark"}
 
         _ ->
-          buf = forbid(buf, tag)
+          ctx = forbid(ctx, tag)
 
-          case parser.(buf) do
-            {:ok, result, rest} ->
-              {:ok, result, unforbid(rest, tag)}
-
-            {:error, _} = err ->
-              err
+          case parser.(ctx) do
+            {:ok, result, rest} -> {:ok, result, unforbid(rest, tag)}
+            {:error, _} = err -> err
           end
       end
     end
@@ -169,136 +217,42 @@ defmodule Expresso.Parser do
 
   defp lambda_expr do
     sequence([
-      keyword(:fn),
-      char(?(),
+      token(:fn),
+      token(:open_paren),
       lambda_args(),
-      char(?)),
-      symbol('=>'),
+      token(:close_paren),
+      token(:arrow),
       sub_expr(),
-      keyword(:end)
+      token(:end)
     ])
-    |> map(fn [:fn, _, arg_names, _, _, expression, :end], buf ->
-      {:lambda, lc(buf), [arg_names, expression]}
+    |> map(fn [:fn, _, arg_names, _, _, expression, :end] ->
+      {:lambda, nil, [arg_names, expression]}
     end)
   end
 
   defp lambda_args do
-    separated_list(
-      token(inline_identifier() |> map(fn key, buf -> {:var, lc(buf), key} end)),
-      char(?,)
-    )
+    maybe(separated_list(plaintext_name(), token(:comma)), [])
   end
 
   defp function_call do
+    # debug :function_call,
     sequence([
-      inline_identifier(),
-      char(?(),
-      choice([
-        separated_list(token(sub_expr()), char(?,)),
-        many0(whitespace())
-      ]),
-      char(?))
+      name(),
+      token(:open_paren),
+      maybe(separated_list(sub_expr(), token(:comma)), []),
+      token(:close_paren)
     ])
-    |> map(fn [fun, _, args, _], buf -> {:fun_call, lc(buf), [fun, args]} end)
+    |> map(fn [{:name, lc, fun}, _, args, _] -> {:fun_call, lc, [fun, args]} end)
   end
 
-  defp identifier() do
-    choice([
-      inline_identifier(),
-      sequence([
-        char(?'),
-        many1(not_char(?')),
-        char(?')
-      ])
-      |> map(fn [_, chars, _] -> chars end)
-    ])
-    |> map(fn chars, buf -> {:var, lc(buf), to_string(chars)} end)
+  defp name do
+    # debug :name,
+    token(:name)
   end
 
-  defp inline_identifier do
-    sequence([
-      choice([ascii_letter(), char(?_)]),
-      many0(inline_key_char_num())
-    ])
-    |> map(fn [first, rest] ->
-      to_string([first | rest])
-    end)
-  end
-
-  defp inline_key_char_num(), do: choice([ascii_letter(), char(?_), digit()])
-
-  defp keyword(expected) when is_atom(expected) do
-    str = to_string(expected)
-
-    inline_identifier()
-    |> token()
-    |> satisfy(fn identifier -> identifier == str end)
-    |> map(fn _ -> expected end)
-  end
-
-  defp symbol(chars) when is_list(chars) do
-    token(sequence(Enum.map(chars, &char(&1))))
-  end
-
-  defp float do
-    choice([
-      sequence([
-        # integer part
-        maybe(choice([char(?-), char(?+)])),
-        unsigned(),
-        # Dot
-        char(?.),
-        # Fractional part
-        unsigned(),
-        # scientific notation part
-        choice([char(?e), char(?E)]),
-        maybe(choice([char(?-), char(?+)])),
-        unsigned()
-      ]),
-      sequence([
-        # integer part
-        maybe(choice([char(?-), char(?+)])),
-        unsigned(),
-        # Dot
-        char(?.),
-        # Fractional part
-        unsigned()
-      ])
-    ])
-    |> map(fn chars -> chars |> :lists.flatten() |> :erlang.list_to_float() end)
-    |> wrap_literal()
-  end
-
-  defp integer do
-    sequence([
-      maybe(choice([char(?-), char(?+)])),
-      unsigned()
-    ])
-    |> map(fn chars -> chars |> :lists.flatten() |> :erlang.list_to_integer() end)
-    |> wrap_literal()
-  end
-
-  defp unsigned do
-    many1(digit())
-  end
-
-  defp quoted_string do
-    sequence([
-      char(?"),
-      many0(
-        choice([
-          sequence([char(?\\), char(?")]) |> map(fn _ -> ?" end),
-          not_char(?")
-        ])
-      ),
-      char(?")
-    ])
-    |> map(fn [_, chars, _] -> to_string(chars) end)
-    |> wrap_literal()
-  end
-
-  defp wrap_literal(parser) do
-    map(parser, fn value, buf -> {:literal, lc(buf), value} end)
+  defp plaintext_name do
+    name()
+    |> satisfy(fn {:name, meta, _name} -> not meta[:quoted] end)
   end
 
   defp separated_list(element_parser, separator_parser) do
@@ -310,17 +264,6 @@ defmodule Expresso.Parser do
       other_elements = Enum.map(rest, fn [_, element] -> element end)
       [first_element | other_elements]
     end)
-  end
-
-  defp token(parser) do
-    whitespace = choice([char(?\s), char(?\n), char(?\t), char(?\r)])
-
-    sequence([
-      many0(whitespace),
-      parser,
-      many0(whitespace)
-    ])
-    |> map(fn [_lws, term, _rws] -> term end)
   end
 
   defp sequence(parsers) do
@@ -342,10 +285,6 @@ defmodule Expresso.Parser do
       input when is_function(mapper, 1) ->
         with {:ok, term, rest} <- parser.(input),
              do: {:ok, mapper.(term), rest}
-
-      input when is_function(mapper, 2) ->
-        with {:ok, term, rest} <- parser.(input),
-             do: {:ok, mapper.(term, input), rest}
     end
   end
 
@@ -362,11 +301,11 @@ defmodule Expresso.Parser do
     end
   end
 
-  defp maybe(parser) do
+  defp maybe(parser, default) do
     fn input ->
       case parser.(input) do
-        {:error, _reason} -> {:ok, [], input}
-        {:ok, term, rest} -> {:ok, [term], rest}
+        {:error, _reason} -> {:ok, default, input}
+        {:ok, term, rest} -> {:ok, term, rest}
       end
     end
   end
@@ -379,90 +318,97 @@ defmodule Expresso.Parser do
   end
 
   defp choice(parsers) do
-    fn input ->
+    fn ctx ->
       case parsers do
         [] ->
-          {:error, "no parser suceeded"}
+          {:error, "no parser matched"}
 
         [first_parser | other_parsers] ->
-          with {:error, _reason} <- first_parser.(input),
-               do: choice(other_parsers).(input)
+          with {:error, _reason} <- first_parser.(ctx),
+               do: choice(other_parsers).(ctx)
       end
     end
   end
-
-  defp digit(), do: satisfy(char(), fn char -> char in ?0..?9 end)
-  defp ascii_letter(), do: satisfy(char(), fn char -> char in ?A..?Z or char in ?a..?z end)
-  defp whitespace(), do: satisfy(char(), fn char -> char in [?\s, ?\n, ?\t, ?\r] end)
-
-  defp char(expected), do: satisfy(char(), fn char -> char == expected end)
-  defp not_char(rejected), do: satisfy(char(), fn char -> char != rejected end)
 
   defp satisfy(parser, acceptor) do
-    fn input ->
-      with {:ok, term, rest} <- parser.(input) do
+    fn ctx ->
+      with {:ok, term, rest} <- parser.(ctx) do
         if acceptor.(term),
           do: {:ok, term, rest},
-          else: {:error, "term rejected"}
+          else: {:error, "predicate failed (token)"}
       end
     end
   end
 
-  defp char() do
-    fn input ->
-      case take(input) do
+  defp literal do
+    token(:literal)
+  end
+
+  defp token(tag) do
+    fn ctx ->
+      case take(ctx) do
+        {:ok, ^tag, ctx} -> {:ok, tag, ctx}
+        {:ok, {^tag, _, _} = token, ctx} -> {:ok, token, ctx}
+        {:ok, token, _} -> {:error, {"unexpected token", token}}
         :EOI -> {:error, "unexpected end of input"}
-        {char, buf} -> {:ok, char, buf}
       end
     end
   end
 
-  def buffer(text, line, column) do
-    buffer(text: text, line: line, column: column, level: 0, stack: [], marks: %{})
+  defp take(context(tokens: [])), do: :EOI
+
+  defp take(context(tokens: [token | tokens], consumed: c) = ctx) do
+    ctx = context(ctx, tokens: tokens, consumed: c + 1)
+    {:ok, token, ctx}
   end
 
-  def buffer(buf, text, line, column) do
-    buffer(buf, text: text, line: line, column: column)
-  end
+  defp forbid(context(marks: marks, consumed: c) = ctx, k),
+    do: context(ctx, marks: Map.put(marks, {k, c}, true))
 
-  defp take(buffer(text: text, line: line, column: column) = buf) do
-    case text do
-      <<?\n, rest::binary>> -> {?\n, buffer(buf, rest, line + 1, 0)}
-      <<char::utf8, rest::binary>> -> {char, buffer(buf, rest, line, column + 1)}
-      "" -> :EOI
+  defp unforbid(context(marks: marks, consumed: c) = ctx, k),
+    do: context(ctx, marks: Map.delete(marks, {k, c}))
+
+  defp forbidden?(context(marks: marks, consumed: c), k),
+    do: Map.get(marks, {k, c}, false)
+
+  @dialyzer {:no_unused, debug: 2, lvldown: 1, lvlup: 1, fail: 2, took: 3, attempt: 2}
+  @doc false
+  # made public for dialyzer warning about unused vars
+  def debug(tag, parser) do
+    fn
+      context(debug: false) = ctx ->
+        parser.(ctx)
+
+      context(debug: true) = ctx ->
+        case parser.(lvldown(attempt(tag, ctx))) do
+          {:ok, result, new_ctx} -> took(tag, result, lvlup(new_ctx))
+          {:error, reason} -> fail(ctx, reason)
+        end
     end
   end
 
-  defp lc(buffer(line: line, column: column)), do: [line: line, column: column]
+  defp lvldown(context(level: level) = ctx),
+    do: context(ctx, level: level + 1)
 
-  def empty_buffer?(buffer(text: text)), do: text == ""
+  defp lvlup(context(level: level) = ctx),
+    do: context(ctx, level: level - 1)
 
-  defp forbid(buffer(marks: marks, line: l, column: c) = buf, k),
-    do: buffer(buf, marks: Map.put(marks, {k, l, c}, true))
-
-  defp unforbid(buffer(marks: marks, line: l, column: c) = buf, k),
-    do: buffer(buf, marks: Map.delete(marks, {k, l, c}))
-
-  defp forbidden?(buffer(marks: marks, line: l, column: c), k),
-    do: Map.get(marks, {k, l, c}, false)
-
-  if Module.get_attribute(__MODULE__, :debugging) do
-    # defp debug_stack(buffer(stack: stack)),
-    #   do: stack |> Enum.reverse() |> Enum.map_join("/", &to_string/1)
-
-    defp bufdown(buffer(level: level, stack: stack) = buf, fun),
-      do: buffer(buf, level: level + 1, stack: [fun | stack])
-
-    defp bufup(buffer(level: level) = buf) when level > 0, do: buffer(buf, level: level - 1)
-    defp indentation(_, add \\ 0)
-    defp indentation(buffer(level: level), add), do: indentation(level, add)
-    defp indentation(level, add), do: String.duplicate("  ", level + add)
+  defp fail(context(on_failure: f) = ctx, reason) do
+    if f != nil, do: f.(ctx, reason)
+    {:error, reason}
   end
 
-  defp consume_whitespace(buf) do
-    case take(buf) do
-      {char, buf} when char in [?\n, ?\t, ?\s, ?\r] -> consume_whitespace(buf)
-      _ -> buf
-    end
+  defp took(_tag, token, context(on_consumed: nil) = ctx) do
+    {:ok, token, ctx}
+  end
+
+  defp took(tag, token, context(on_consumed: f) = ctx) do
+    context() = new_ctx = f.(tag, token, ctx)
+    {:ok, token, new_ctx}
+  end
+
+  defp attempt(tag, context(on_attempt: f) = ctx) do
+    context() = new_ctx = f.(tag, ctx)
+    new_ctx
   end
 end

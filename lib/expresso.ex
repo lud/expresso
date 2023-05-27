@@ -1,30 +1,32 @@
 defmodule Expresso do
+  alias Expresso.Tokenizer
   alias Expresso.EvalError
   alias Expresso.ParseError
   alias Expresso.Parser
   alias Expresso.VM
 
-  def parse(code, _opts \\ []) do
-    Parser.parse(code)
+  def tokenize(code) do
+    Tokenizer.tokenize(code)
   end
 
-  def parse!(code, opts \\ []) do
-    case parse(code, opts) do
-      {:ok, ast} -> ast
+  def tokenize!(code) do
+    case tokenize(code) do
+      {:ok, tokens} -> tokens
       {:error, %ParseError{} = e} -> raise e
     end
   end
 
-  def eval_string(code, opts \\ []) do
-    case parse(code, opts) do
-      {:error, reason} ->
-        {:error, reason}
+  def parse_tokens(code, opts \\ []) do
+    Parser.parse_tokens(code, opts)
+  end
 
-      {:ok, ast} ->
-        case eval_ast(ast, opts) do
-          {:ok, value, state} -> {:ok, value, state}
-          {:error, %EvalError{} = e} -> {:error, EvalError.with_source(e, code)}
-        end
+  def eval_string(code, opts \\ []) do
+    with {:ok, tokens} <- tokenize(code),
+         {:ok, ast} <- parse_tokens(tokens, opts),
+         {:ok, value, state} <- eval_ast(ast, opts) do
+      {:ok, value, state}
+    else
+      {:error, %EvalError{} = e} -> {:error, EvalError.with_source(e, code)}
     end
   end
 

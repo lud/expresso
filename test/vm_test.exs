@@ -2,25 +2,26 @@ defmodule Expresso.VMTest do
   alias Expresso.EvalError
   alias Expresso.VM
   use ExUnit.Case, async: true
-  import Expresso.Test.Util
 
-  defp run(code, input \\ %{}) do
-    tokens = get_tokens(code, print: true)
+  defp run(code, data \\ %{}) do
+    {:ok, tokens} = Expresso.Tokenizer.tokenize(code)
+    {:ok, ast} = Expresso.Parser.parse_tokens(tokens)
 
-    case VM.run(tokens, input) do
+    case VM.run(ast, data, debug: true) do
       {:ok, value, _state} -> value
       {:error, e} -> raise EvalError.with_source(e, code)
     end
   end
 
   defp get_error(code, input \\ %{}) do
-    tokens = get_tokens(code)
-    assert {:error, reason} = VM.run(tokens, input)
+    {:ok, tokens} = Expresso.Tokenizer.tokenize(code)
+    {:ok, ast} = Expresso.Parser.parse_tokens(tokens)
+    assert {:error, reason} = VM.run(ast, input)
     assert is_struct(reason, EvalError)
     reason = EvalError.with_source(reason, code)
     message = Exception.message(reason)
 
-    IO.puts([IO.ANSI.magenta(), message, IO.ANSI.reset()])
+    # IO.puts([IO.ANSI.magenta(), message, IO.ANSI.reset()])
 
     if String.contains?(message, "while retrieving Exception.message") do
       flunk("""

@@ -1,17 +1,25 @@
 defmodule Expresso.VM do
   alias Expresso.EvalError
 
-  @enforce_keys [:vars, :scope]
-  defstruct vars: %{}, scope: []
+  @enable_debug false
+  @enforce_keys [:vars, :scope, :debug]
 
-  def run(ast, input \\ %{}) do
+  if @enable_debug do
+    @dialyzer {:nowarn_function, print_debug: 2}
+    @compiler {:inline, print_debug: 2, eval: 2}
+  end
+
+  defstruct vars: %{}, scope: [], debug: false
+
+  def run(ast, input \\ %{}, opts \\ []) do
     vars =
       case is_map(input) do
         true -> input
         false -> %{}
       end
 
-    {value, state} = eval(ast, %__MODULE__{vars: vars, scope: []})
+    {value, state} =
+      eval(ast, %__MODULE__{vars: vars, scope: [], debug: Keyword.get(opts, :debug, false)})
 
     {:ok, value, state}
   rescue
@@ -20,21 +28,34 @@ defmodule Expresso.VM do
 
   # -- Evaluation of AST tokens -----------------------------------------------
 
-  defp eval({:literal, _, value}, state) do
+  if @enable_debug do
+    defp eval(ast, %{debug: true} = state) do
+      debug(state, "EVAL", ast)
+      do_eval(ast, state)
+    end
+  end
+
+  defp eval(ast, state) do
+    do_eval(ast, state)
+  end
+
+  defp do_eval({:literal, _, value}, state) do
     literal(value, state)
   end
 
-  defp eval({:var, _, _} = var, state) do
+  defp do_eval({:name, _, name} = var, state) do
+    debug(state, "LOOKUP", name)
+    debug(state, "STATE", state)
     {value, state} = lookup_var(state, var)
     {value, state}
   end
 
-  defp eval({:getprop, _, [subject, var]}, state) do
+  defp do_eval({:getprop, _, [subject, var]}, state) do
     {subject, state} = eval(subject, state)
     {deref(subject, var), state}
   end
 
-  defp eval({:fun_call, lc, [fun, args]} = fun_call, state) do
+  defp do_eval({:fun_call, lc, [fun, args]} = fun_call, state) do
     __vm_function__(fun, args, state)
   catch
     {:arg_type_error, arg, arg_lc, arg_num, errmsg} ->
@@ -47,7 +68,7 @@ defmodule Expresso.VM do
       raise EvalError.function_argument_count_error(fun, arg_num, lc)
   end
 
-  defp eval({:lambda, _meta, [_, _]} = lambda, state) do
+  defp do_eval({:lambda, _meta, [_, _]} = lambda, state) do
     build_lambda(lambda, state)
   end
 
@@ -73,9 +94,9 @@ defmodule Expresso.VM do
       raise EvalError.lambda_argument_count_error(k, n, arg_lc || lc)
   end
 
-  defp do_zip_args([{:var, _, k} | ks], [v | vs], n), do: [{k, v} | do_zip_args(ks, vs, n + 1)]
+  defp do_zip_args([{:name, _, k} | ks], [v | vs], n), do: [{k, v} | do_zip_args(ks, vs, n + 1)]
   defp do_zip_args([], _, _), do: []
-  defp do_zip_args([{:var, lc, k} | _], [], n), do: throw({:missing_lambda_arg, k, n, lc})
+  defp do_zip_args([{:name, lc, k} | _], [], n), do: throw({:missing_lambda_arg, k, n, lc})
 
   # -- Reading values from scopes ---------------------------------------------
 
@@ -88,7 +109,7 @@ defmodule Expresso.VM do
     deref(vars, var)
   end
 
-  defp deref_scope([scope | _], _vars, {:var, _, k}) when is_map_key(scope, k) do
+  defp deref_scope([scope | _], _vars, {:name, _, k}) when is_map_key(scope, k) do
     Map.fetch!(scope, k)
   end
 
@@ -96,7 +117,7 @@ defmodule Expresso.VM do
     deref_scope(scopes, vars, var)
   end
 
-  defp deref(kv, {:var, _, k}) when is_map_key(kv, k) do
+  defp deref(kv, {:name, _, k}) when is_map_key(kv, k) do
     Map.fetch!(kv, k)
   end
 
@@ -164,7 +185,7 @@ defmodule Expresso.VM do
               {[rest, first, fun], args, state}
 
             [] ->
-              [{:var, lc, _} | _] = raw_args
+              [{:name, lc, _} | _] = raw_args
 
               raise EvalError.empty_error(
                       lc,
@@ -178,5 +199,25 @@ defmodule Expresso.VM do
       {new_acc, state} = fun.([elem, acc], state)
       {new_acc, state}
     end)
+  end
+
+  # -- Debugging --------------------------------------------------------------
+
+  if @enable_debug do
+    defp debug(%{debug: false}, _ast, _data) do
+      nil
+    end
+
+    defp debug(%{debug: true}, ast, data) do
+      print_debug(ast, data)
+    end
+
+    defp print_debug(tag, data) do
+      IO.puts("#{tag} #{inspect(data)}")
+    end
+  else
+    defp debug(_state, _ast, _data) do
+      nil
+    end
   end
 end
