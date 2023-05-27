@@ -196,6 +196,7 @@ defmodule Expresso.VM do
 
     list
     |> Enum.reduce({init, state}, fn elem, {acc, state} ->
+      # ensure match error here
       {new_acc, state} = fun.([elem, acc], state)
       {new_acc, state}
     end)
