@@ -12,7 +12,7 @@ defmodule Expresso.TokenizerTest do
     assert [{:literal, _, ^expected}] = tokens
   end
 
-  test "can tokenize an integer" do
+  test "tokenize an integer" do
     assert_literal(1, to_tokens("1"))
     assert_literal(-1, to_tokens("-1"))
     assert_literal(123, to_tokens("123"))
@@ -20,7 +20,7 @@ defmodule Expresso.TokenizerTest do
     assert_literal(-0, to_tokens("-0"))
   end
 
-  test "can tokenize a float" do
+  test "tokenize a float" do
     assert_literal(1.1, to_tokens("1.1"))
     assert_literal(1.0e10, to_tokens("1.0e10"))
     assert_literal(1.0e+10, to_tokens("1.0e+10"))
@@ -33,7 +33,7 @@ defmodule Expresso.TokenizerTest do
     assert_literal(-1.0e-10, to_tokens("-1.0E-10"))
   end
 
-  test "can tokenize a data path" do
+  test "tokenize a data path" do
     assert [{:name, _, "a"}] = to_tokens("a")
     assert [{:name, _, "a"}] = to_tokens("   a   ")
 
@@ -50,14 +50,14 @@ defmodule Expresso.TokenizerTest do
            ] = to_tokens("my_var.my_sub.my_third")
   end
 
-  test "can tokenize a data path with freeform keys" do
+  test "tokenize a data path with freeform keys" do
     assert [{:name, meta, "1"}] = to_tokens("'1'")
     assert meta[:quoted] == true
 
     assert [{:name, _, "1"}, :., {:name, _, "2"}] = to_tokens("'1'.'2'")
   end
 
-  test "can tokenize a data path with mixed keys" do
+  test "tokenize a data path with mixed keys" do
     assert [{:name, _, "a"}, :., {:name, _, "1"}] = to_tokens("a.'1'")
 
     assert [
@@ -71,7 +71,7 @@ defmodule Expresso.TokenizerTest do
            ] = to_tokens("a.b.'1'.c")
   end
 
-  test "can tokenize a function call" do
+  test "tokenize a function call" do
     assert [{:name, _, "call"}, :open_paren, {:name, _, "some"}, :close_paren] =
              to_tokens("call(some)")
 
@@ -101,7 +101,7 @@ defmodule Expresso.TokenizerTest do
            ] = to_tokens("add(add(1, 2), 3)")
   end
 
-  test "can tokenize a method call" do
+  test "tokenize a method call" do
     assert [
              {:literal, _, 1},
              :colon,
@@ -171,7 +171,7 @@ defmodule Expresso.TokenizerTest do
     assert {:error, %ParseError{}} = Expresso.tokenize("!%//()z^q")
   end
 
-  test "can tokenize a quoted string" do
+  test "tokenize a quoted string" do
     assert_literal(~s/hello/, to_tokens(~s/"hello"/))
     assert_literal(~s/with"escape/, to_tokens(~S/"with\"escape"/))
     assert_literal(~s/with"two"escapes/, to_tokens(~S/"with\"two\"escapes"/))
@@ -184,9 +184,26 @@ defmodule Expresso.TokenizerTest do
       newline"
       """)
     )
+
   end
 
-  test "can tokenize a lambda expression" do
+  test "tokenize escaped chars" do
+
+    assert_literal(
+      ~s/with an\nescaped newline/,
+      to_tokens(~S/"with an\nescaped newline"/)
+    )
+
+    assert_literal("\n", to_tokens(~S/"\n"/))
+    assert_literal("\t", to_tokens(~S/"\t"/))
+    assert_literal("\r", to_tokens(~S/"\r"/))
+    assert "\s" == " "
+    assert_literal(" ", to_tokens(~S/"\s"/))
+    assert_literal("\\", to_tokens(~S/"\\"/))
+    assert_literal("\\n", to_tokens(~S/"\\n"/))
+  end
+
+  test "tokenize a lambda expression" do
     assert [
              {:name, _, "some_list"},
              :colon,

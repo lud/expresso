@@ -38,7 +38,7 @@ defmodule Expresso.Tokenizer do
               {:ok, retval, rest}
 
             {:error, reason} = err when is_binary(reason) ->
-              # IO.puts("#{indentation(the_input, -1)}/#{unquote(fun)} FAIL")
+              IO.puts("#{indentation(the_input, -1)}/#{unquote(fun)} FAIL: #{inspect(reason)}")
               err
           end
         end
@@ -214,12 +214,21 @@ defmodule Expresso.Tokenizer do
     many1(digit())
   end
 
+  defp return(k) do
+    fn _ -> k end
+  end
+
   defp quoted_string do
     sequence([
       char(?"),
       many0(
         choice([
-          sequence([char(?\\), char(?")]) |> map(fn _ -> ?" end),
+          escaped_char(?") |> map(return("\"")),
+          escaped_char(?\\) |> map(return("\\")),
+          escaped_char(?n) |> map(return("\n")),
+          escaped_char(?t) |> map(return("\t")),
+          escaped_char(?r) |> map(return("\r")),
+          escaped_char(?s) |> map(return(" ")),
           not_char(?")
         ])
       ),
@@ -303,7 +312,7 @@ defmodule Expresso.Tokenizer do
     fn input ->
       case parsers do
         [] ->
-          {:error, "could not tokenize input"}
+          {:error, "no choice matched with input: #{buffer(input, :text)}"}
 
         [first_parser | other_parsers] ->
           with {:error, _reason} <- first_parser.(input),
@@ -314,6 +323,10 @@ defmodule Expresso.Tokenizer do
 
   defp digit(), do: satisfy(char(), fn char -> char in ?0..?9 end)
   defp ascii_letter(), do: satisfy(char(), fn char -> char in ?A..?Z or char in ?a..?z end)
+
+  defp escaped_char(code) when is_integer(code) do
+    sequence([char(?\\), char(code)])
+  end
 
   defp char(expected), do: satisfy(char(), fn char -> char == expected end)
   defp not_char(rejected), do: satisfy(char(), fn char -> char != rejected end)

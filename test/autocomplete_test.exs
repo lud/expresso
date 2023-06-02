@@ -25,9 +25,9 @@ defmodule Expresso.AutocompleteTest do
 
       comps = get_completions("", data)
 
-      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", key: "aaa"}, &1))
-      assert find_completion(comps, &match?(%{type: :data, comp: "bbb", key: "bbb"}, &1))
-      assert find_completion(comps, &match?(%{type: :data, comp: "ccc", key: "ccc"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", label: "aaa"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "bbb", label: "bbb"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "ccc", label: "ccc"}, &1))
     end
 
     test "returns keys matching a prefix" do
@@ -35,9 +35,9 @@ defmodule Expresso.AutocompleteTest do
 
       comps = get_completions("a", data)
 
-      assert find_completion(comps, &match?(%{type: :data, comp: "aa", key: "aaa"}, &1))
-      refute find_completion(comps, &match?(%{type: :data, key: "bbb"}, &1))
-      refute find_completion(comps, &match?(%{type: :data, key: "ccc"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "aa", label: "aaa"}, &1))
+      refute find_completion(comps, &match?(%{type: :data, label: "bbb"}, &1))
+      refute find_completion(comps, &match?(%{type: :data, label: "ccc"}, &1))
     end
 
     test "returns the child keys of a matched map with a dot prefix" do
@@ -46,8 +46,8 @@ defmodule Expresso.AutocompleteTest do
       # we do not provide the dot here
       comps = get_completions("parent", data)
 
-      assert find_completion(comps, &match?(%{type: :data, comp: ".aaa", key: "aaa"}, &1))
-      assert find_completion(comps, &match?(%{type: :data, comp: ".bbb", key: "bbb"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: ".aaa", label: "aaa"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: ".bbb", label: "bbb"}, &1))
     end
 
     test "returns the child keys of a matched map after the dot" do
@@ -56,8 +56,8 @@ defmodule Expresso.AutocompleteTest do
       # we DO provide the dot here
       comps = get_completions("parent.", data)
 
-      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", key: "aaa"}, &1))
-      assert find_completion(comps, &match?(%{type: :data, comp: "bbb", key: "bbb"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", label: "aaa"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "bbb", label: "bbb"}, &1))
     end
 
     test "returns the child keys matching a prefix after the dot" do
@@ -65,7 +65,7 @@ defmodule Expresso.AutocompleteTest do
 
       # we DO provide the dot here
       [comp] = get_completions("parent.a", data) |> only_data()
-      assert match?(%{type: :data, comp: "aa", key: "aaa"}, comp)
+      assert match?(%{type: :data, comp: "aa", label: "aaa"}, comp)
     end
 
     test "does not return anything if the path is wrong" do
@@ -89,8 +89,8 @@ defmodule Expresso.AutocompleteTest do
       # we DO provide the dot here
       comps = get_completions("replace(parent.", data)
 
-      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", key: "aaa"}, &1))
-      assert find_completion(comps, &match?(%{type: :data, comp: "bbb", key: "bbb"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", label: "aaa"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "bbb", label: "bbb"}, &1))
 
       assert comps == get_completions("stuff:some_method(parent.", data)
       assert comps == get_completions("stuff:some_method(fn(x) => parent.", data)
@@ -115,34 +115,37 @@ defmodule Expresso.AutocompleteTest do
       comps = get_completions("", data)
 
       # we still have the data
-      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", key: "aaa"}, &1))
+      assert find_completion(comps, &match?(%{type: :data, comp: "aaa", label: "aaa"}, &1))
 
       # but also the functions
-      assert find_completion(comps, &match?(%{type: :fun, comp: "replace(", fun: "replace"}, &1))
+      assert find_completion(
+               comps,
+               &match?(%{type: :fun, comp: "replace(", label: "replace"}, &1)
+             )
     end
 
     test "completes with prefix" do
       comps = get_completions("rep")
-      assert find_completion(comps, &match?(%{type: :fun, fun: "replace", comp: "lace("}, &1))
+      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "lace("}, &1))
     end
 
     test "completes with prefix and data with same name" do
       data = %{"replacer" => "hello"}
       comps = get_completions("rep", data)
-      assert find_completion(comps, &match?(%{type: :fun, fun: "replace", comp: "lace("}, &1))
-      assert find_completion(comps, &match?(%{type: :data, key: "replacer", comp: "lacer"}, &1))
+      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "lace("}, &1))
+      assert find_completion(comps, &match?(%{type: :data, label: "replacer", comp: "lacer"}, &1))
 
       # with exact same name
       data = %{"replace" => "hello"}
       comps = get_completions("rep", data)
-      assert find_completion(comps, &match?(%{type: :fun, fun: "replace", comp: "lace("}, &1))
-      assert find_completion(comps, &match?(%{type: :data, key: "replace", comp: "lace"}, &1))
+      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "lace("}, &1))
+      assert find_completion(comps, &match?(%{type: :data, label: "replace", comp: "lace"}, &1))
 
       # functions are discared with props
       data = %{"parent" => %{"replace" => "hello"}}
       comps = get_completions("parent.rep", data)
-      refute find_completion(comps, &match?(%{type: :fun, fun: "replace", comp: "lace("}, &1))
-      assert find_completion(comps, &match?(%{type: :data, key: "replace", comp: "lace"}, &1))
+      refute find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "lace("}, &1))
+      assert find_completion(comps, &match?(%{type: :data, label: "replace", comp: "lace"}, &1))
     end
 
     test "completes with methods from the data" do
@@ -153,18 +156,18 @@ defmodule Expresso.AutocompleteTest do
 
       assert find_completion(
                comps,
-               &match?(%{type: :fun, fun: "replace", comp: ":replace("}, &1)
+               &match?(%{type: :fun, label: "replace", comp: ":replace("}, &1)
              )
 
-      assert find_completion(comps, &match?(%{type: :fun, fun: "len", comp: ":len("}, &1))
-      refute find_completion(comps, &match?(%{type: :fun, fun: "size"}, &1))
+      assert find_completion(comps, &match?(%{type: :fun, label: "len", comp: ":len("}, &1))
+      refute find_completion(comps, &match?(%{type: :fun, label: "size"}, &1))
 
       # with data as a map
 
       data = %{"some_map" => %{}}
       comps = get_completions("some_map", data)
-      assert find_completion(comps, &match?(%{type: :fun, fun: "size", comp: ":size("}, &1))
-      refute find_completion(comps, &match?(%{type: :fun, fun: "len"}, &1))
+      assert find_completion(comps, &match?(%{type: :fun, label: "size", comp: ":size("}, &1))
+      refute find_completion(comps, &match?(%{type: :fun, label: "len"}, &1))
     end
 
     test "completes method names" do
@@ -173,7 +176,7 @@ defmodule Expresso.AutocompleteTest do
 
       assert find_completion(
                comps,
-               &match?(%{type: :fun, fun: "replace", comp: "replace("}, &1)
+               &match?(%{type: :fun, label: "replace", comp: "replace("}, &1)
              )
     end
 
@@ -184,7 +187,7 @@ defmodule Expresso.AutocompleteTest do
 
       assert find_completion(
                comps,
-               &match?(%{type: :fun, fun: "replace", comp: "lace("}, &1)
+               &match?(%{type: :fun, label: "replace", comp: "lace("}, &1)
              )
 
       # but with some map we get nothing with the "rep" prefix
@@ -193,7 +196,7 @@ defmodule Expresso.AutocompleteTest do
 
       refute find_completion(
                comps,
-               &match?(%{type: :fun, fun: "replace", comp: "lace("}, &1)
+               &match?(%{type: :fun, label: "replace", comp: "lace("}, &1)
              )
     end
 

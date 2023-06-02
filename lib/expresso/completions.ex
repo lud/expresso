@@ -159,47 +159,47 @@ defmodule Expresso.Completions do
   defp eval_completions({:map_keys, data}) do
     data
     |> Map.keys()
-    |> Enum.map(fn key -> %{type: :data, key: key, comp: key} end)
+    |> Enum.map(fn key -> %{type: :data, label: key, comp: key} end)
   end
 
   defp eval_completions({:keys, keys, prefix}) do
     keys
-    |> Enum.map(fn key -> %{type: :data, key: key, comp: unprefix(key, prefix)} end)
+    |> Enum.map(fn key -> %{type: :data, label: key, comp: unprefix(key, prefix)} end)
   end
 
   defp eval_completions({:dot_map_keys, data}) do
     data
     |> Map.keys()
-    |> Enum.map(fn key -> %{type: :data, key: key, comp: "." <> key} end)
+    |> Enum.map(fn key -> %{type: :data, label: key, comp: "." <> key} end)
   end
 
   defp eval_completions(:all_funs) do
     vm_functions()
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, fun: fun, comp: fun <> "("} end)
+    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: fun <> "("} end)
   end
 
   defp eval_completions({:fun_prefix, prefix}) do
     vm_functions()
     |> Enum.filter(fn {fun, _, _} -> String.starts_with?(fun, prefix) end)
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, fun: fun, comp: unprefix(fun, prefix) <> "("} end)
+    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: unprefix(fun, prefix) <> "("} end)
   end
 
   defp eval_completions({:methods_for, data}) do
     data
     |> methods_for()
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, fun: fun, comp: fun <> "("} end)
+    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: fun <> "("} end)
   end
 
   defp eval_completions({:colon_methods_for, data}) do
     data
     |> methods_for()
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, fun: fun, comp: ":" <> fun <> "("} end)
+    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: ":" <> fun <> "("} end)
   end
 
   defp eval_completions({:methods_for_prefix, data, prefix}) do
     data
     |> methods_for(prefix)
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, fun: fun, comp: unprefix(fun, prefix) <> "("} end)
+    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: unprefix(fun, prefix) <> "("} end)
   end
 
   defp eval_completions(list) when is_list(list) do
