@@ -46,13 +46,12 @@ defmodule Expresso.VM do
   defp do_eval({:name, _, name} = var, state) do
     debug(state, "LOOKUP", name)
     debug(state, "STATE", state)
-    {value, state} = lookup_var(state, var)
-    {value, state}
+    {lookup_var!(state, var), state}
   end
 
   defp do_eval({:getprop, _, [subject, var]}, state) do
     {subject, state} = eval(subject, state)
-    {deref(subject, var), state}
+    {deref!(subject, var), state}
   end
 
   defp do_eval({:fun_call, lc, [fun, args]} = fun_call, state) do
@@ -77,11 +76,13 @@ defmodule Expresso.VM do
   defp literal(binary, state) when is_binary(binary), do: {binary, state}
 
   defp build_lambda({:lambda, _meta, [_, body]} = lambda, state) do
+    snapshot = snapshot_scope(state, body)
+
     fun = fn args, state_in ->
       scope = Map.new(zip_args(lambda, args, 1))
-      state_in = put_scope(state_in, scope)
+      state_in = state_in |> put_scope(snapshot) |> put_scope(scope)
       {return, state_out} = eval(body, state_in)
-      {return, drop_scope(state_out)}
+      {return, state_out |> drop_scope(2)}
     end
 
     {{:lambda, fun}, state}
@@ -100,37 +101,82 @@ defmodule Expresso.VM do
 
   # -- Reading values from scopes ---------------------------------------------
 
-  defp lookup_var(%{vars: vars, scope: scopes} = state, var) do
-    value = deref_scope(scopes, vars, var)
-    {value, state}
+  defp lookup_var!(state, var) do
+    state
+    |> lookup_var(var)
+    |> case do
+      {:ok, value} -> value
+      :error -> raise EvalError.key_error(var, state)
+    end
   end
 
-  defp deref_scope([], vars, var) do
-    deref(vars, var)
+  defp lookup_var(%{vars: vars, scope: scopes}, var) do
+    deref_scope(scopes, vars, var)
   end
 
   defp deref_scope([scope | _], _vars, {:name, _, k}) when is_map_key(scope, k) do
-    Map.fetch!(scope, k)
+    {:ok, Map.fetch!(scope, k)}
   end
 
   defp deref_scope([_ | scopes], vars, var) do
     deref_scope(scopes, vars, var)
   end
 
-  defp deref(kv, {:name, _, k}) when is_map_key(kv, k) do
-    Map.fetch!(kv, k)
+  defp deref_scope([], vars, var) do
+    deref(vars, var)
   end
 
-  defp deref(data, var) do
-    raise EvalError.key_error(var, data)
+  defp deref!(kv, var) do
+    case deref(kv, var) do
+      {:ok, value} -> value
+      :error -> raise EvalError.key_error(var, kv)
+    end
+  end
+
+  defp deref(kv, {:name, _, k}) when is_map_key(kv, k) do
+    {:ok, Map.fetch!(kv, k)}
+  end
+
+  defp deref(_data, _var) do
+    :error
   end
 
   defp put_scope(%{scope: scopes} = state, scope) do
     %{state | scope: [scope | scopes]}
   end
 
-  defp drop_scope(%{scope: [_ | scope]} = state) do
-    %{state | scope: scope}
+  defp drop_scope(%{scope: scope} = state, n) do
+    %{state | scope: Enum.drop(scope, n)}
+  end
+
+  defp snapshot_scope(state, expression) do
+    expression
+    |> tree_names([])
+    |> Enum.uniq()
+    |> Enum.reduce([], fn {:name, _, key} = name, acc ->
+      case lookup_var(state, name) do
+        {:ok, value} -> [{key, value} | acc]
+        :error -> acc
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp tree_names({:fun_call, _, [_, args]}, acc) do
+    Enum.reduce(args, acc, &tree_names/2)
+  end
+
+  defp tree_names({:name, _, _} = name, acc) do
+    [name | acc]
+  end
+
+  defp tree_names({:literal, _, _}, acc) do
+    acc
+  end
+
+  defp tree_names({:lambda, _meta, [_args, body]}, acc) do
+    # this is a sublambda.
+    tree_names(body, acc)
   end
 
   # -- Debugging --------------------------------------------------------------
@@ -186,6 +232,20 @@ defmodule Expresso.VM do
   end
 
   function add(a :: number, b :: number), do: a + b
+
+  function join(str :: array(string), joiner :: string = "") do
+    Enum.join(str, joiner)
+  end
+
+  function concat(str :: ...(string)) do
+    Enum.join(str, "")
+  end
+
+  defp __vm_function__("call", args, state) do
+    {[fun, f_args], _, state} = pull_args(args, state, [:lambda, {:spread_type, :any}])
+    {value, state} = fun.(f_args, state)
+    {value, state}
+  end
 
   defp __vm_function__("for_each", args, state) do
     {[list, fun], _, state} = pull_args(args, state, [:list, :lambda])

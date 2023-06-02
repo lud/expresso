@@ -14,11 +14,11 @@ defmodule Expresso.EvalError do
     build(:key_error, lc, %{key: key, map?: is_map(data), data: data})
   end
 
-  def arg_type_error({:fun_call, lc, [fun, args]}, arg, arg_lc, arg_num, errmsg) do
+  def arg_type_error({:fun_call, lc, [fun, args]}, value, arg_lc, arg_num, errmsg) do
     build(:arg_type_error, arg_lc || lc, %{
       fun: fun,
       args: args,
-      arg: arg,
+      value: value,
       arg_num: arg_num,
       errmsg: errmsg
     })
@@ -76,8 +76,8 @@ defmodule Expresso.EvalError do
     "cannot dereference key `#{format_key(key)}`, data is not an object"
   end
 
-  defp message(:arg_type_error, %{fun: fun, arg_num: arg_num, errmsg: errmsg}) do
-    "invalid #{nth(arg_num)} argument for function `#{fun}`, #{errmsg}"
+  defp message(:arg_type_error, %{fun: fun, value: value, arg_num: arg_num, errmsg: errmsg}) do
+    "invalid #{nth(arg_num)} argument for function `#{fun}`, #{errmsg}, got `#{inspect(value)}`"
   end
 
   defp message(:undefined_function_error, %{fun: fun}) do

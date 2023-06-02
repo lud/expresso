@@ -95,10 +95,6 @@ defmodule Expresso.Tokenizer do
 
   defp expr() do
     choice([
-      # lambda_expr(),
-      # method_call_chain(),
-      # getprop_chain(),
-      # function_call(),
       float(),
       integer(),
       keyword(),

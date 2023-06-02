@@ -21,18 +21,19 @@ defmodule Expresso do
     Parser.parse_tokens(code, opts)
   end
 
-  def eval_string(code, opts \\ []) do
+  def eval_string(code, data \\ %{}, opts \\ []) do
     with {:ok, tokens} <- tokenize(code),
          {:ok, ast} <- parse_tokens(tokens, opts),
-         {:ok, value, state} <- eval_ast(ast, opts) do
+         {:ok, value, state} <- eval_ast(ast, data, opts) do
       {:ok, value, state}
     else
       {:error, %EvalError{} = e} -> {:error, EvalError.with_source(e, code)}
+      {:error, e} -> {:error, e}
     end
   end
 
-  def eval_ast(ast, opts \\ []) do
-    VM.run(ast, opts)
+  def eval_ast(ast, data \\ %{}, opts \\ []) do
+    VM.run(ast, data, opts)
   end
 
   def get_completions(code, data \\ %{}) do

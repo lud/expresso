@@ -6,6 +6,7 @@ defmodule Expresso.VM.Library do
     list
     number
     lambda
+    any
   )a
 
   defmacro __using__(_) do
@@ -46,6 +47,10 @@ defmodule Expresso.VM.Library do
         __vm_union_type__(arg, subtypes)
       end
 
+      def __vm_type__({:array_type, subtype}, arg) do
+        __vm_array_type__(arg, subtype)
+      end
+
       defp __vm_union_type__(arg, subtypes), do: __vm_union_type__(arg, subtypes, [])
 
       defp __vm_union_type__(arg, [s | subtypes], reasons) do
@@ -59,12 +64,57 @@ defmodule Expresso.VM.Library do
         {:error, Enum.join(reasons, ", ")}
       end
 
+      defp __vm_array_type__(arg, subtype) when is_list(arg) do
+        Enum.reduce_while(arg, [], fn
+          elem, acc ->
+            case __vm_type__(subtype, elem) do
+              {:ok, value} -> {:cont, [value | acc]}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+        end)
+        |> case do
+          {:error, _} = err -> err
+          list -> {:ok, :lists.reverse(list)}
+        end
+      end
+
+      defp __vm_array_type__(arg, subtype) when is_list(arg) do
+        Enum.reduce_while(arg, [], fn
+          elem, acc ->
+            case __vm_type__(subtype, elem) do
+              {:ok, value} -> {:cont, [value | acc]}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+        end)
+        |> case do
+          {:error, _} = err -> err
+          list -> {:ok, :lists.reverse(list)}
+        end
+      end
+
+      defp __vm_array_type__(arg, subtype) do
+        {:error, "not an array"}
+      end
+
       defp typeof(list) when is_list(list), do: "array"
       defp typeof(map) when is_map(map), do: "object"
       defp typeof(binary) when is_binary(binary), do: "binary"
       defp typeof(integer) when is_integer(integer), do: "integer"
       defp typeof(float) when is_float(float), do: "float"
       # defp typeof(nil), do: "null"
+
+      defp pull_arg(args, state, {:spread_type, t}, arg_num) do
+        {values, [], state} = __pull_spread__(args, state, t, arg_num, [])
+        {values, [], state}
+      end
+
+      defp pull_arg([arg | args], state, {:optional_type, {t, _}}, arg_num) do
+        pull_arg([arg | args], state, t, arg_num)
+      end
+
+      defp pull_arg([], state, {:optional_type, {_, default}}, arg_num) do
+        {default, [], state}
+      end
 
       defp pull_arg([arg | args], state, type, arg_num) do
         {arg_val, state} = eval(arg, state)
@@ -76,7 +126,7 @@ defmodule Expresso.VM.Library do
           {:error, errmsg} ->
             {_, lc, _} = arg
 
-            throw({:arg_type_error, arg, lc, arg_num, errmsg})
+            throw({:arg_type_error, arg_val, lc, arg_num, errmsg})
         end
       end
 
@@ -95,6 +145,15 @@ defmodule Expresso.VM.Library do
           {[value | values], args, state}
         end)
         |> then(fn {values, args, state} -> {:lists.reverse(values), args, state} end)
+      end
+
+      defp __pull_spread__([_ | _] = args, state, t, arg_num, acc) do
+        {value, args, state} = pull_arg(args, state, t, arg_num)
+        __pull_spread__(args, state, t, arg_num + 1, [value | acc])
+      end
+
+      defp __pull_spread__([] = args, state, t, arg_num, acc) do
+        {:lists.reverse(acc), [], state}
       end
     end
   end
@@ -156,16 +215,47 @@ defmodule Expresso.VM.Library do
         {return, unquote(the_state)}
       end
     end
-    |> tap(&IO.puts(Macro.to_string(&1)))
+    |> tap(&IO.puts(["\n", Macro.to_string(&1)]))
   end
 
   defp build_vm_type({:|, _, types}) do
     {:union_type, Enum.map(types, &build_vm_type/1)}
   end
 
-  defp build_vm_type({t, _, _}) do
+  defp build_vm_type({t, _, nil}) do
     ensure_type_exists(t)
     t
+  end
+
+  defp build_vm_type({:array, _, [t]}) do
+    {:array_type, build_vm_type(t)}
+  end
+
+  defp build_vm_type({:=, _, [t, default_value]}) do
+    default = build_default_value(default_value)
+    t = build_vm_type(t)
+    {:optional_type, {t, default}}
+  end
+
+  defp build_vm_type({:..., _, [t]}) do
+    {:spread_type, build_vm_type(t)}
+  end
+
+  defp build_vm_type({t, _, _} = type) do
+    raise ArgumentError, "invalid VM type: #{Macro.to_string(type)}"
+    ensure_type_exists(t)
+    t
+  end
+
+  defp build_default_value(default)
+       when is_binary(default)
+       when is_integer(default)
+       when is_float(default) do
+    default
+  end
+
+  defp build_default_value(quoted) do
+    raise ArgumentError, "default value must be a litteral value, got #{inspect(quoted)}"
   end
 
   defp ensure_type_exists(key) when key in @arg_types, do: :ok

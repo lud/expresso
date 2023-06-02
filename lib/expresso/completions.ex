@@ -239,12 +239,17 @@ defmodule Expresso.Completions do
 
     with_prefix
     # Keep functions that accept the data as the first argument
-    |> Enum.filter(fn
-      {_, mod, [t1 | _] = _no_args} ->
-        case mod.__vm_type__(t1, data) do
-          {:ok, _} -> true
-          _ -> false
-        end
-    end)
+    |> Enum.filter(fn {_, mod, [t1 | _] = _no_args} -> of_type?(data, mod, t1) end)
+  end
+
+  defp of_type?(data, mod, {:spread_type, t}) do
+    of_type?(data, mod, t)
+  end
+
+  defp of_type?(data, mod, t) do
+    case mod.__vm_type__(t, data) do
+      {:ok, _} -> true
+      _ -> false
+    end
   end
 end

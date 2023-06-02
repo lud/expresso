@@ -137,9 +137,9 @@ defmodule Expresso.Parser do
   defp expr() do
     # debug :expr,
     choice([
-      lambda_expr(),
       method_call_chain(),
       getprop_chain(),
+      lambda_expr(),
       function_call(),
       literal(),
       name()
@@ -226,7 +226,8 @@ defmodule Expresso.Parser do
       token(:end)
     ])
     |> map(fn [:fn, _, arg_names, _, _, expression, :end] ->
-      {:lambda, nil, [arg_names, expression]}
+      names = Enum.map(arg_names, &elem(&1, 2))
+      {:lambda, [args: names], [arg_names, expression]}
     end)
   end
 

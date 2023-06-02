@@ -81,6 +81,7 @@ defmodule Expresso.VMTest do
 
   test "the replace function cannot accept a map as argument" do
     err = get_error(~s[replace(greetings, "l", "/")], %{"greetings" => %{"english" => "hello"}})
+
     assert Exception.message(err) =~ "invalid 1st argument for function `replace`"
 
     err =
@@ -192,6 +193,11 @@ defmodule Expresso.VMTest do
                "some_list" => [1, 2, 3, 4]
              })
 
+    assert 0 =
+             run("some_list:reduce(fn(x, acc) => acc:add(x) end)", %{
+               "some_list" => [0]
+             })
+
     # empty list without initializer
     err =
       get_error("reduce(some_list, fn(x, acc) => acc:add(x) end)", %{
@@ -199,5 +205,74 @@ defmodule Expresso.VMTest do
       })
 
     assert Exception.message(err) =~ "empty list given to `reduce` without initial value"
+  end
+
+  test "the VM supports array types" do
+    err = get_error(~s/"aaa":join("")/)
+    assert Exception.message(err) =~ "not an array"
+
+    assert "hello!world!test" =
+             run(~s/some_list:join("!")/, %{"some_list" => ["hello", "world", "test"]})
+  end
+
+  test "the VM supports default arguments" do
+    assert "helloworldtest" =
+             run(~s/some_list:join()/, %{"some_list" => ["hello", "world", "test"]})
+  end
+
+  test "the VM supports spread arguments" do
+    data = %{"a" => "hello", "b" => "world", "c" => "test"}
+    assert "hello" = run(~s/concat(a)/, data)
+    assert "helloworld" = run(~s/concat(a,b)/, data)
+    assert "hello world!" = run(~s/concat(a, " ", b, "!")/, data)
+    assert "" = run("concat()")
+  end
+
+  test "scoped lambdas" do
+    data = %{"x" => 1}
+
+    assert 1 = run("x", data)
+    assert 1 = run("fn() => x end:call()", data)
+    assert 1 = run("fn(y) => y end:call(x)", data)
+    assert 2 = run("fn(y) => y end:call(x:add(1))", data)
+
+    # x is shadowed and should be bound to `2`
+    assert 2 = run("fn(x) => x end:call(2)", data)
+
+    # x is shadowed and passed in a closure
+    assert 2 = run("fn(x) => fn() => x end end:call(2):call()", data)
+    assert 3 = run("fn(x) => fn(x) => x end end:call(2):call(3)", data)
+    assert 3 = run("fn(x) => fn(x) => x end:call(x:add(1)) end:call(2)", data)
+
+    # same variable name for both args should return the latter
+    assert 2 = run("fn(x, x) => x end:call(1, 2)", data)
+  end
+
+  test "fun with lambdas" do
+    # some messy stuff
+    data = %{"some_list" => [1, 2, 3, 4]}
+
+    # - In the first for_each, we're returning a lambda that returns `x`, where
+    #   `x` is the number in the list.
+    # - In the second for_each, `x` refers to the returned lambda.
+    code = ~s"""
+    some_list
+      :for_each(fn(x) => fn(y) => x:add(y) end end)
+      :for_each(fn(x) => x:call(10) end)
+    """
+
+    assert [11, 12, 13, 14] = run(code, data)
+  end
+
+  test "returning lambdas from functions" do
+    data = %{"some_list" => [1, 2, 3, 4]}
+
+    code = ~s"""
+    some_list
+      :for_each(fn(x) => fn(y) => x:add(y) end end)
+      :for_each(fn(f) => f:call(10) end)
+    """
+
+    assert [11, 12, 13, 14] = run(code, data)
   end
 end
