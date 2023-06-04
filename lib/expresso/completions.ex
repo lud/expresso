@@ -181,7 +181,9 @@ defmodule Expresso.Completions do
   defp eval_completions({:fun_prefix, prefix}) do
     vm_functions()
     |> Enum.filter(fn {fun, _, _} -> String.starts_with?(fun, prefix) end)
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: unprefix(fun, prefix) <> "("} end)
+    |> Enum.map(fn {fun, _, _} ->
+      %{type: :fun, label: fun, comp: unprefix(fun, prefix) <> "("}
+    end)
   end
 
   defp eval_completions({:methods_for, data}) do
@@ -199,7 +201,9 @@ defmodule Expresso.Completions do
   defp eval_completions({:methods_for_prefix, data, prefix}) do
     data
     |> methods_for(prefix)
-    |> Enum.map(fn {fun, _, _} -> %{type: :fun, label: fun, comp: unprefix(fun, prefix) <> "("} end)
+    |> Enum.map(fn {fun, _, _} ->
+      %{type: :fun, label: fun, comp: unprefix(fun, prefix) <> "("}
+    end)
   end
 
   defp eval_completions(list) when is_list(list) do

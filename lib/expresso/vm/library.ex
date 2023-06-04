@@ -15,7 +15,7 @@ defmodule Expresso.VM.Library do
       @before_compile unquote(__MODULE__)
       Module.register_attribute(__MODULE__, :vm_function, accumulate: true)
 
-      # Injecting all functions types to speed up things
+      # Injecting all functions types to speed up things. TODO deoptimize
 
       @doc false
       def __vm_type__(:as_string, arg) when is_binary(arg), do: {:ok, arg}
@@ -95,13 +95,6 @@ defmodule Expresso.VM.Library do
       defp __vm_array_type__(arg, subtype) do
         {:error, "not an array"}
       end
-
-      defp typeof(list) when is_list(list), do: "array"
-      defp typeof(map) when is_map(map), do: "object"
-      defp typeof(binary) when is_binary(binary), do: "binary"
-      defp typeof(integer) when is_integer(integer), do: "integer"
-      defp typeof(float) when is_float(float), do: "float"
-      # defp typeof(nil), do: "null"
 
       defp pull_arg(args, state, {:spread_type, t}, arg_num) do
         {values, [], state} = __pull_spread__(args, state, t, arg_num, [])
@@ -274,5 +267,18 @@ defmodule Expresso.VM.Library do
         @vm_function
       end
     end
+  end
+
+  def typeof(list) when is_list(list), do: "array"
+  def typeof(map) when is_map(map), do: "object"
+  def typeof(binary) when is_binary(binary), do: "string"
+  def typeof(integer) when is_integer(integer), do: "integer"
+  def typeof(float) when is_float(float), do: "float"
+  def typeof(nil), do: "null"
+  def typeof({:lambda, _}), do: "lambda"
+
+  def typeof(_unknown) do
+    # IO.warn("invalid type: #{inspect(unknown)}")
+    "unknown type"
   end
 end

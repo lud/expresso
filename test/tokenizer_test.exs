@@ -184,11 +184,9 @@ defmodule Expresso.TokenizerTest do
       newline"
       """)
     )
-
   end
 
   test "tokenize escaped chars" do
-
     assert_literal(
       ~s/with an\nescaped newline/,
       to_tokens(~S/"with an\nescaped newline"/)
