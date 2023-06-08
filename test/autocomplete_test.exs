@@ -141,11 +141,24 @@ defmodule Expresso.AutocompleteTest do
       assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "lace("}, &1))
       assert find_completion(comps, &match?(%{type: :data, label: "replace", comp: "lace"}, &1))
 
-      # functions are discared with props
+      # functions can follow props - does not mistake the prop for a function
       data = %{"parent" => %{"replace" => "hello"}}
       comps = get_completions("parent.rep", data)
-      refute find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "lace("}, &1))
+      refute find_completion(comps, &match?(%{type: :fun, label: "replace"}, &1))
       assert find_completion(comps, &match?(%{type: :data, label: "replace", comp: "lace"}, &1))
+
+      # functions can follow props - uses the data
+      data = %{"parent" => %{"greeting" => "hello"}}
+
+      # without colon
+      comps = get_completions("parent.greeting", data)
+      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: ":replace("}, &1))
+      refute find_completion(comps, &match?(%{type: :fun, label: "size"}, &1))
+
+      # with colon
+      comps = get_completions("parent.greeting:", data)
+      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "replace("}, &1))
+      refute find_completion(comps, &match?(%{type: :fun, label: "size"}, &1))
     end
 
     test "completes with methods from the data" do
@@ -168,6 +181,19 @@ defmodule Expresso.AutocompleteTest do
       comps = get_completions("some_map", data)
       assert find_completion(comps, &match?(%{type: :fun, label: "size", comp: ":size("}, &1))
       refute find_completion(comps, &match?(%{type: :fun, label: "len"}, &1))
+    end
+
+    test "completes with all known functions when the data is now known" do
+      # In the following code we have a semicolon, and as the autocompletion tool does
+      # not run the code, it cannot the type of the method subject, so it should
+      # return all known functions.
+      code = ~s/some_map.a_key:replace("a", "b"):/
+      data = %{}
+      comps = get_completions(code, data)
+      # This always works as long as the data is a map
+      assert find_completion(comps, &match?(%{type: :fun, label: "size", comp: "size("}, &1))
+      # But this should work too
+      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "replace("}, &1))
     end
 
     test "completes method names" do

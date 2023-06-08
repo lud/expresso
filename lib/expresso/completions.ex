@@ -99,59 +99,82 @@ defmodule Expresso.Completions do
 
   defp rewind_fun_path(tokens) do
     Enum.reduce_while(tokens, [], fn
-      # not a function expression
-      :., _ -> {:halt, []}
+      :. = token, acc -> {:cont, [token | acc]}
       {:name, _, _} = token, acc -> {:cont, [token | acc]}
       :colon = token, acc -> {:cont, [token | acc]}
+      # not a function expression
       _, acc -> {:halt, acc}
     end)
   end
 
   defp complete_fun(tokens, data) do
-    methods_only? = false
+    data =
+      case tokens do
+        [{:name, _, _} | _] -> data
+        _ -> :unknown_data
+      end
+
+    # The scope helps to track previous tokens when reducing over them.
+    scope = :initial
 
     tokens
     # See complete_data/2 for a basic understanding on how we build the
     # completions incrementally.
-    |> Enum.reduce_while({data, :all_funs, methods_only?}, fn token, {data, completions, m?} ->
-      fun_reducer(token, data, completions, m?)
+    |> Enum.reduce_while({data, :all_funs, scope}, fn token, {data, completions, scope} ->
+      completions |> IO.inspect(label: ~S/comple/)
+      fun_reducer(token, data, completions, scope)
     end)
     |> elem(1)
     |> eval_completions()
   end
 
   # if the given key exists in the data we will return a list of all applicable
-  # methods. But we will also return functions that start with that name, if any
-  defp fun_reducer({:name, _, fun}, data, _, m?) when is_map_key(data, fun) do
+  # methods. But as the key could be the same name as a function, we will also
+  # return all functions with that prefix.
+  defp fun_reducer({:name, _, fun}, data, _, scope) when is_map_key(data, fun) do
     data = Map.fetch!(data, fun)
 
     comps =
-      if m?,
-        do: {:colon_methods_for, data},
-        else: [{:colon_methods_for, data}, {:fun_prefix, fun}]
+      case scope do
+        :property -> {:colon_methods_for, data}
+        :method_call -> {:colon_methods_for, data}
+        :initial -> [{:colon_methods_for, data}, {:fun_prefix, fun}]
+      end
 
-    {:cont, {data, comps, m?}}
+    {:cont, {data, comps, :initial}}
   end
 
   # With a name that is not a found key, if we are returning methods we will
   # return all methods with the prefix matching the data type. If we are not in
   # a methods_only situation we return all functions with the prefix.
-  defp fun_reducer({:name, _, fun}, data, _, m?) do
+  defp fun_reducer({:name, _, fun}, data, _, scope) do
     if is_map(data) do
       false = is_map_key(data, fun)
     end
 
     comps =
-      if m?,
-        do: {:methods_for_prefix, data, fun},
-        else: {:fun_prefix, fun}
+      case scope do
+        :property -> :no_completion
+        :method_call -> {:methods_for_prefix, data, fun}
+        :initial -> {:fun_prefix, fun}
+      end
 
-    {:cont, {nil, comps, m?}}
+    {:cont, {nil, comps, :initial}}
   end
 
-  defp fun_reducer(:colon, data, _, _) do
-    # Once we encounter a colon we will turn the methods_only flag to true
-    {:cont, {data, {:methods_for, data}, true}}
+  # When we find a dot, the next token should be another name, so at this point
+  # there is no completion to be done.
+  defp fun_reducer(:., data, _, _scope) do
+    {:cont, {data, :no_completion, :property}}
+  end
+
+  defp fun_reducer(:colon, :unknown_data = data, _, scope) do
+    {:cont, {data, :all_funs, :method_call}}
+  end
+
+  defp fun_reducer(:colon, data, _, _scope) do
+    # When we find a colon for know data, we turn the scope to :method_call
+    {:cont, {data, {:methods_for, data}, :method_call}}
   end
 
   # -- Format completions to be returned --------------------------------------

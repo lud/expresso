@@ -7,7 +7,7 @@ defmodule Expresso.ParserTest do
   defp to_ast(code) do
     assert {:ok, tokens} = Tokenizer.tokenize(code)
 
-    case Parser.parse_tokens(tokens, debug: false) do
+    case Parser.parse_tokens(tokens, debug: true) do
       {:ok, ast} ->
         ast
 
