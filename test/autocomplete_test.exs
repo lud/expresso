@@ -152,12 +152,22 @@ defmodule Expresso.AutocompleteTest do
 
       # without colon
       comps = get_completions("parent.greeting", data)
-      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: ":replace("}, &1))
+
+      assert find_completion(
+               comps,
+               &match?(%{type: :fun, label: "replace", comp: ":replace("}, &1)
+             )
+
       refute find_completion(comps, &match?(%{type: :fun, label: "size"}, &1))
 
       # with colon
       comps = get_completions("parent.greeting:", data)
-      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "replace("}, &1))
+
+      assert find_completion(
+               comps,
+               &match?(%{type: :fun, label: "replace", comp: "replace("}, &1)
+             )
+
       refute find_completion(comps, &match?(%{type: :fun, label: "size"}, &1))
     end
 
@@ -193,7 +203,10 @@ defmodule Expresso.AutocompleteTest do
       # This always works as long as the data is a map
       assert find_completion(comps, &match?(%{type: :fun, label: "size", comp: "size("}, &1))
       # But this should work too
-      assert find_completion(comps, &match?(%{type: :fun, label: "replace", comp: "replace("}, &1))
+      assert find_completion(
+               comps,
+               &match?(%{type: :fun, label: "replace", comp: "replace("}, &1)
+             )
     end
 
     test "completes method names" do
@@ -227,10 +240,10 @@ defmodule Expresso.AutocompleteTest do
     end
 
     test "autocomplete special cases" do
-      data = %{"a" => %{}, "b" => 2, "c" => 3, "d" => 4}
+      data = %{"a" => %{}, "b" => 2, "c" => 3, "x" => 4}
 
       # nothing should come up
-      assert [] = get_completions("a:b:c:d", data)
+      assert [] = get_completions("a:b:c:x", data)
 
       # no completions for data should show after a colon
       assert [] = get_completions("a:", data) |> only_data()

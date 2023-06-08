@@ -121,7 +121,6 @@ defmodule Expresso.Completions do
     # See complete_data/2 for a basic understanding on how we build the
     # completions incrementally.
     |> Enum.reduce_while({data, :all_funs, scope}, fn token, {data, completions, scope} ->
-      completions |> IO.inspect(label: ~S/comple/)
       fun_reducer(token, data, completions, scope)
     end)
     |> elem(1)

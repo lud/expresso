@@ -179,6 +179,10 @@ defmodule Expresso.VM do
     tree_names(body, acc)
   end
 
+  defp tree_names({:getprop, _meta, [n1, n2]}, acc) do
+    tree_names(n2, tree_names(n1, acc))
+  end
+
   # -- Debugging --------------------------------------------------------------
 
   if @enable_debug do
@@ -241,6 +245,14 @@ defmodule Expresso.VM do
     Enum.join(str, "")
   end
 
+  function equals(a :: any, b :: any) do
+    a == b
+  end
+
+  function dump(a :: any) do
+    inspect(a)
+  end
+
   defp __vm_function__("call", args, state) do
     {[fun, f_args], _, state} = pull_args(args, state, [:lambda, {:spread_type, :any}])
     {value, state} = fun.(f_args, state)
@@ -256,6 +268,19 @@ defmodule Expresso.VM do
       {[value | values], state}
     end)
     |> then(fn {values, state} -> {:lists.reverse(values), state} end)
+  end
+
+  defp __vm_function__("find", args, state) do
+    {[list, fun], _, state} = pull_args(args, state, [:list, :lambda])
+
+    list
+    |> Enum.reduce_while({nil, state}, fn elem, {nil, state} ->
+      {matched?, state} = fun.([elem], state)
+
+      if matched?,
+        do: {:halt, {elem, state}},
+        else: {:cont, {nil, state}}
+    end)
   end
 
   defp __vm_function__("reduce", raw_args, state) do

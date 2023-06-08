@@ -18,12 +18,11 @@ defmodule Expresso.Parser do
   )
 
   def parse_tokens(tokens, opts \\ []) do
-    parser = expr()
     ctx = context(tokens: tokens)
     debug? = Keyword.get(opts, :debug, false)
     ctx = if debug?, do: setup_debug(ctx), else: ctx
 
-    result = parser.(ctx)
+    result = parse_recursive(expr(), ctx)
 
     debug_info = clean_get_debug()
 
@@ -40,10 +39,23 @@ defmodule Expresso.Parser do
     clean_get_debug()
   end
 
+  defp parse_recursive(parser, ctx) do
+    case parser.(ctx) do
+      {:ok, expression, context(tokens: []) = ctx} ->
+        {:ok, unwrap_expr(expression), ctx}
+
+      {:ok, expression, context(tokens: rest) = ctx} ->
+        parse_recursive(parser, context(ctx, tokens: [expression | rest]))
+
+      other ->
+        other
+    end
+  end
+
   defp return(result) do
     case result do
-      {:ok, result, context(tokens: [])} ->
-        {:ok, result}
+      {:ok, expression, context(tokens: [])} ->
+        {:ok, expression}
 
       {:ok, result, context(tokens: rest)} ->
         {:error,
@@ -135,58 +147,67 @@ defmodule Expresso.Parser do
   end
 
   defp expr() do
-    debug :expr,
-          choice([
-            method_call_chain(),
-            getprop_chain(),
-            lambda_expr(),
-            function_call(),
-            literal(),
-            name()
-          ])
+    # debug :expr,
+    choice([
+      method_call_chain(),
+      getprop_chain(),
+      lambda_expr(),
+      function_call(),
+      literal(),
+      name()
+    ])
+    |> map(fn expression -> {:expr, [], expression} end)
   end
 
-  defp sub_expr, do: lazy(fn -> expr() end)
+  defp unwrap_expr({:expr, _, expression}), do: expression
+
+  defp sub_expr do
+    choice([
+      token(:expr),
+      lazy(fn -> expr() end)
+    ])
+    |> map(&unwrap_expr/1)
+  end
 
   defp method_call_chain do
-    debug :method_call_chain,
-          exclusive(
-            :in_method_call_chain,
-            sequence([
-              sub_expr(),
-              many1(method_call())
-            ])
-          )
-          |> map(fn [subject, method_calls] ->
-            Enum.reduce(method_calls, subject, fn {:method_call, lc, [fun, args]}, subject ->
-              {:fun_call, lc, [fun, [subject | args]]}
-            end)
-          end)
+    # debug :method_call_chain,
+    exclusive(
+      :in_method_call_chain,
+      sequence([
+        sub_expr(),
+        many1(method_call())
+      ])
+    )
+    |> map(fn [subject, method_calls] ->
+      Enum.reduce(method_calls, subject, fn {:method_call, lc, [fun, args]}, subject ->
+        {:fun_call, lc, [fun, [subject | args]]}
+      end)
+    end)
   end
 
   defp method_call do
-    debug :method_call,
-          sequence([
-            token(:colon),
-            function_call()
-          ])
-          |> map(fn [_, {:fun_call, lc, [fun, args]}] -> {:method_call, lc, [fun, args]} end)
+    # debug :method_call,
+    sequence([
+      token(:colon),
+      function_call()
+    ])
+    |> map(fn [_, {:fun_call, lc, [fun, args]}] -> {:method_call, lc, [fun, args]} end)
   end
 
   defp getprop_chain do
-    debug :getprop_chain,
-          exclusive(
-            :in_getprop_chain,
-            sequence([
-              sub_expr(),
-              many1(getprop())
-            ])
-          )
-          |> map(fn [subject, getters] ->
-            Enum.reduce(getters, subject, fn var, subject ->
-              {:getprop, nil, [subject, var]}
-            end)
-          end)
+    # debug :getprop_chain,
+    exclusive(
+      :in_getprop_chain,
+      sequence([
+        sub_expr(),
+        many1(getprop())
+      ])
+    )
+    |> map(fn [subject, getters] ->
+      Enum.reduce(getters, subject, fn var, subject ->
+        {:getprop, nil, [subject, var]}
+      end)
+    end)
   end
 
   defp getprop do
@@ -237,14 +258,14 @@ defmodule Expresso.Parser do
   end
 
   defp function_call do
-    debug :function_call,
-          sequence([
-            name(),
-            token(:open_paren),
-            maybe(separated_list(sub_expr(), token(:comma)), []),
-            token(:close_paren)
-          ])
-          |> map(fn [{:name, lc, fun}, _, args, _] -> {:fun_call, lc, [fun, args]} end)
+    # debug :function_call,
+    sequence([
+      name(),
+      token(:open_paren),
+      maybe(separated_list(sub_expr(), token(:comma)), []),
+      token(:close_paren)
+    ])
+    |> map(fn [{:name, lc, fun}, _, args, _] -> {:fun_call, lc, [fun, args]} end)
   end
 
   defp name do
@@ -371,7 +392,6 @@ defmodule Expresso.Parser do
     do: context(ctx, marks: Map.delete(marks, {k, c}))
 
   defp forbidden?(context(marks: marks, consumed: c), k) do
-    marks |> IO.inspect(label: ~S/marks/)
     Map.get(marks, {k, c}, false)
   end
 

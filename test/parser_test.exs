@@ -4,10 +4,12 @@ defmodule Expresso.ParserTest do
   alias Expresso.Parser
   use ExUnit.Case, async: true
 
+  @debug false
+
   defp to_ast(code) do
     assert {:ok, tokens} = Tokenizer.tokenize(code)
 
-    case Parser.parse_tokens(tokens, debug: true) do
+    case Parser.parse_tokens(tokens, debug: @debug) do
       {:ok, ast} ->
         ast
 
@@ -181,5 +183,61 @@ defmodule Expresso.ParserTest do
              to_ast("some_list:map(fn(x) => x end)")
 
     assert {:lambda, _, [[{:name, _, "x"}], {:name, _, "x"}]} = lambda
+  end
+
+  test "can parse multiple method and getprop chains" do
+    assert {
+             :fun_call,
+             [quoted: false, line: 0, column: 28],
+             [
+               "i",
+               [
+                 {:getprop, nil,
+                  [
+                    {:getprop, nil,
+                     [
+                       {:fun_call, [quoted: false, line: 0, column: 20],
+                        [
+                          "g",
+                          [
+                            {:fun_call, [quoted: false, line: 0, column: 15],
+                             [
+                               "f",
+                               [
+                                 {:getprop, nil,
+                                  [
+                                    {:fun_call, [quoted: false, line: 0, column: 9],
+                                     [
+                                       "d",
+                                       [
+                                         {:getprop, nil,
+                                          [
+                                            {:fun_call, [quoted: false, line: 0, column: 2],
+                                             [
+                                               "b",
+                                               [
+                                                 {:name, [quoted: false, line: 0, column: 0],
+                                                  "a"},
+                                                 {:name, [quoted: false, line: 0, column: 4], "x"}
+                                               ]
+                                             ]},
+                                            {:name, [quoted: false, line: 0, column: 7], "c"}
+                                          ]}
+                                       ]
+                                     ]},
+                                    {:name, [quoted: false, line: 0, column: 13], "e"}
+                                  ]},
+                                 {:name, [quoted: false, line: 0, column: 17], "z"}
+                               ]
+                             ]}
+                          ]
+                        ]},
+                       {:name, [quoted: false, line: 0, column: 24], "h"}
+                     ]},
+                    {:name, [quoted: false, line: 0, column: 26], "h"}
+                  ]}
+               ]
+             ]
+           } = to_ast("a:b(x).c:d().e:f(z):g().h.h:i()")
   end
 end
