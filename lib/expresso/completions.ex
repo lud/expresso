@@ -167,7 +167,7 @@ defmodule Expresso.Completions do
     {:cont, {data, :no_completion, :property}}
   end
 
-  defp fun_reducer(:colon, :unknown_data = data, _, scope) do
+  defp fun_reducer(:colon, :unknown_data = data, _, _scope) do
     {:cont, {data, :all_funs, :method_call}}
   end
 

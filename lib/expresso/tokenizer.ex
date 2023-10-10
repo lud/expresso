@@ -114,12 +114,12 @@ defmodule Expresso.Tokenizer do
   defp punctuation do
     token(
       choice([
-        symbol('(', :open_paren),
-        symbol(')', :close_paren),
-        symbol(':', :colon),
+        symbol(~c"(", :open_paren),
+        symbol(~c")", :close_paren),
+        symbol(~c":", :colon),
         symbol(:.),
-        symbol('=>', :arrow),
-        symbol(',', :comma)
+        symbol(~c"=>", :arrow),
+        symbol(~c",", :comma)
       ])
     )
   end

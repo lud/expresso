@@ -230,7 +230,7 @@ defmodule Expresso.VM.Library do
     {:optional_type, {t, default}}
   end
 
-  defp build_vm_type({:..., _, [t]}) do
+  defp build_vm_type({:"~~~", _, [t]}) do
     {:spread_type, build_vm_type(t)}
   end
 

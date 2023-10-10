@@ -123,7 +123,7 @@ defmodule Expresso.VMTest do
   test "lengths and sizes" do
     values = %{
       "some_string" => "abc",
-      "some_list" => 'abc',
+      "some_list" => ~c"abc",
       "some_map" => %{a: 1, b: 2, c: 3}
     }
 

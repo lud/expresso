@@ -241,7 +241,7 @@ defmodule Expresso.VM do
     Enum.join(str, joiner)
   end
 
-  function concat(str :: ...(string)) do
+  function concat(str :: ~~~string) do
     Enum.join(str, "")
   end
 
